@@ -362,4 +362,3 @@ function ThreadPanel({accounts,myId,parent,channelName,onClose,onSend,onReact}) 
   );
 }
 
-function useState(init){return React.useState(init);}
