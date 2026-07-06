@@ -416,10 +416,23 @@ export default function ChatApp({ me: initMe, onLogout }) {
 
   const editMsg   = (id,text)   => socket?.emit('message:edit',  {id,channelId:activeId,text});
   const deleteMsg = id           => socket?.emit('message:delete',{id,channelId:activeId});
-  const forwardTo = toChannelId  => {
+  const forwardTo = async toChannelId => {
     if (!forwardMsg) return;
-    socket?.emit('message:forward',{text:forwardMsg.text, toChannelId});
+    // ensure socket is in the target room before forwarding
+    socket?.emit('channel:join', { channelId: toChannelId });
+    socket?.emit('message:forward', { text: forwardMsg.text, toChannelId });
     setForwardMsg(null);
+    // load that channel's messages and navigate to it so user sees the forwarded msg
+    await loadMessages(toChannelId);
+    setActiveId(toChannelId);
+    // if it's a DM channel, also set the DM user
+    const targetChan = channels.find(c=>c.id===toChannelId);
+    if (targetChan?.type==='dm') {
+      const otherId = targetChan.members?.find(id=>id!==me.id);
+      if (otherId) setActiveDMUserId(otherId);
+    } else {
+      setActiveDMUserId(null);
+    }
   };
 
   const createChannel = () => {
@@ -622,13 +635,19 @@ function MsgRow({accounts,myId,msg,grouped,onReact,onThread,canThread,inThread,o
   const [editing,setEditing]=useState(false);
   const [editVal,setEditVal]=useState(msg.text);
   const [showMore,setShowMore]=useState(false);
+  const [confirmDelete,setConfirmDelete]=useState(false);
+  const hideRef=useRef(null);
   const isDeleted=msg.deleted||msg.text==='[message deleted]';
   const isOwn=msg.senderId===myId;
+
+  // delay-based hover so toolbar at -top-4 (outside bounding box) stays visible
+  const onEnter=()=>{ clearTimeout(hideRef.current); setHover(true); };
+  const onLeave=()=>{ hideRef.current=setTimeout(()=>{ setHover(false); setPicker(false); },200); };
 
   const submitEdit=()=>{ if(editVal.trim()&&editVal!==msg.text) onEdit(msg.id,editVal); setEditing(false); };
 
   return (
-    <div onMouseEnter={()=>setHover(true)} onMouseLeave={()=>{setHover(false);setPicker(false);setShowMore(false);}}
+    <div onMouseEnter={onEnter} onMouseLeave={onLeave}
       className={`group relative flex gap-3 px-3 ${grouped?'py-0.5':'mt-1 py-1.5'} hover:bg-slate-50`}>
       <div className="w-9 shrink-0">
         {!grouped
@@ -678,7 +697,7 @@ function MsgRow({accounts,myId,msg,grouped,onReact,onThread,canThread,inThread,o
       </div>
 
       {hover&&!editing&&!isDeleted&&(
-        <div className="absolute -top-4 right-3 flex items-center gap-0.5 rounded-xl border border-slate-200 bg-white p-1 shadow-md">
+        <div onMouseEnter={onEnter} onMouseLeave={onLeave} className="absolute -top-4 right-3 flex items-center gap-0.5 rounded-xl border border-slate-200 bg-white p-1 shadow-md">
           <ToolBtn icon={<Smile size={16}/>}    title="Add reaction"    onClick={()=>setPicker(p=>!p)}/>
           {canThread&&!inThread&&<ToolBtn icon={<Reply size={16}/>}   title="Reply in thread" onClick={onThread}/>}
           <ToolBtn icon={<Forward size={16}/>}  title="Forward"         onClick={onForward}/>
@@ -690,7 +709,7 @@ function MsgRow({accounts,myId,msg,grouped,onReact,onThread,canThread,inThread,o
                 <div className="fixed inset-0 z-30" onClick={()=>setShowMore(false)}/>
                 <div className="absolute right-0 top-9 z-40 w-44 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
                   {isOwn&&<button onClick={()=>{setEditing(true);setEditVal(msg.text);setShowMore(false);}} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-50"><Pencil size={14} className="text-slate-400"/> Edit message</button>}
-                  <button onClick={()=>{if(window.confirm('Delete this message?'))onDelete(msg.id);setShowMore(false);}} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-sm text-rose-600 hover:bg-rose-50"><Trash2 size={14} className="text-rose-400"/> Delete message</button>
+                  {isOwn&&<button onClick={()=>{setConfirmDelete(true);setShowMore(false);}} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-sm text-rose-600 hover:bg-rose-50"><Trash2 size={14} className="text-rose-400"/> Delete message</button>}
                 </div>
               </>
             )}
@@ -700,6 +719,14 @@ function MsgRow({accounts,myId,msg,grouped,onReact,onThread,canThread,inThread,o
       {picker&&!isDeleted&&(
         <div className="absolute right-3 top-8 z-10 grid grid-cols-6 gap-0.5 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg">
           {EMOJIS.map(e=><button key={e} onClick={()=>{onReact(e);setPicker(false);}} className="grid h-8 w-8 place-items-center rounded-md text-lg hover:bg-slate-100">{e}</button>)}
+        </div>
+      )}
+      {/* Inline delete confirmation  */}
+      {confirmDelete&&(
+        <div className="col-span-full ml-12 mt-1 flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
+          <span className="text-sm text-rose-700">Delete this message?</span>
+          <button onClick={()=>{onDelete(msg.id);setConfirmDelete(false);}} className="ml-auto rounded-md bg-rose-500 px-3 py-1 text-xs font-semibold text-white hover:bg-rose-600">Delete</button>
+          <button onClick={()=>setConfirmDelete(false)} className="rounded-md border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
         </div>
       )}
     </div>
