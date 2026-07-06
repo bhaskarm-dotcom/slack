@@ -120,9 +120,9 @@ export default function ChatApp({ me, onLogout }) {
 
   const sorted = useMemo(()=>[...messages].sort((a,b)=>a.t-b.t),[messages]);
 
-  const isDM        = activeId?.startsWith('d_');
   const activeChannel = channels.find(c=>c.id===activeId);
-  const dmUserId    = isDM ? messages.find(Boolean)?.channelId?.split('__dm__')?.find(id=>id!==me.id) : null;
+  const isDM        = activeChannel?.type === 'dm';
+  const dmUserId    = isDM ? activeChannel?.members?.find(id => id !== me.id) : null;
   const dmUser      = dmUserId ? accounts[dmUserId] : null;
 
   const sendMsg = (text, parentId=null) => {
@@ -162,6 +162,7 @@ export default function ChatApp({ me, onLogout }) {
   const openDM = async (userId) => {
     const { data } = await api.get(`/api/channels/dm/${userId}`);
     if(!channels.find(c=>c.id===data.id)) setChannels(p=>[...p,data]);
+    socket?.emit('channel:join', { channelId: data.id }); // ensure socket is in DM room
     setActiveId(data.id);
   };
 

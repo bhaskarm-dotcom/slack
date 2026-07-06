@@ -38,7 +38,7 @@ function setupSocket(io) {
                      EXTRACT(EPOCH FROM created_at)*1000 AS t`,
           [channelId, userId, text.trim(), parentId || null]
         );
-        const msg = { ...rows[0], reactions: [], thread: [] };
+        const msg = { ...rows[0], t: parseFloat(rows[0].t), reactions: [], thread: [] };
         if (parentId) {
           const upd = await db.query(
             `UPDATE messages SET thread_count=thread_count+1 WHERE id=$1
@@ -98,6 +98,17 @@ function setupSocket(io) {
         const members = await db.query(`SELECT user_id FROM channel_members WHERE channel_id=$1`,[ch.id]);
         const full = { ...ch, members: members.rows.map(r=>r.user_id) };
         io.to(ch.id).emit('channel:new', full);
+      } catch (err) { console.error(err); }
+    });
+
+    /* ── Join a channel room (needed for DMs created after connect) ── */
+    socket.on('channel:join', async ({ channelId }) => {
+      try {
+        const { rows } = await db.query(
+          `SELECT 1 FROM channel_members WHERE channel_id=$1 AND user_id=$2`,
+          [channelId, userId]
+        );
+        if (rows.length) socket.join(channelId);
       } catch (err) { console.error(err); }
     });
 

@@ -41,8 +41,9 @@ async function buildMessages(channelId) {
 
   return msgs.map(m => ({
     ...m,
+    t: parseFloat(m.t),
     reactions: reactMap[m.id] || [],
-    thread:    threadMap[m.id] || [],
+    thread: (threadMap[m.id] || []).map(tm => ({ ...tm, t: parseFloat(tm.t) })),
   }));
 }
 
