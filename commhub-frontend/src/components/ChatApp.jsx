@@ -619,11 +619,31 @@ export default function ChatApp({me:initMe,onLogout}){
 ══════════════════════════════════════════════════════════ */
 function RichComposer({onSend,placeholder,fileRef,onFileChange,attachments,onRemoveAttachment,onTypingStart,onTypingStop}){
   const editorRef=useRef(null);
+  const savedRangeRef=useRef(null);
   const [isEmpty,setIsEmpty]=useState(true);
   const [showEmoji,setShowEmoji]=useState(false);
   const [showLink,setShowLink]=useState(false);
   const [linkUrl,setLinkUrl]=useState('');
   const uploading=attachments.some(a=>a.uploading);
+
+  // save current selection range before it gets lost to input focus
+  const saveSelection=()=>{
+    const sel=window.getSelection();
+    if(sel&&sel.rangeCount>0){
+      const range=sel.getRangeAt(0);
+      // only save if selection is actually inside our editor
+      if(editorRef.current&&editorRef.current.contains(range.commonAncestorContainer)){
+        savedRangeRef.current=range.cloneRange();
+      }
+    }
+  };
+  const restoreSelection=()=>{
+    if(savedRangeRef.current){
+      const sel=window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(savedRangeRef.current);
+    }
+  };
 
   const exec=cmd=>{
     editorRef.current?.focus();
@@ -669,7 +689,27 @@ function RichComposer({onSend,placeholder,fileRef,onFileChange,attachments,onRem
     if(!linkUrl.trim()) return;
     const url=linkUrl.startsWith('http')?linkUrl:'https://'+linkUrl;
     editorRef.current?.focus();
-    document.execCommand('createLink',false,url);
+    restoreSelection();
+    const sel=window.getSelection();
+    if(sel&&sel.rangeCount>0&&!sel.getRangeAt(0).collapsed){
+      // text was selected — turn it into a link
+      document.execCommand('createLink',false,url);
+    } else {
+      // no selection — insert the URL itself as a clickable link
+      const a=document.createElement('a');
+      a.href=url; a.textContent=url; a.target='_blank'; a.rel='noopener noreferrer';
+      const range=savedRangeRef.current;
+      if(range){
+        range.deleteContents();
+        range.insertNode(a);
+        range.setStartAfter(a); range.collapse(true);
+        sel.removeAllRanges(); sel.addRange(range);
+      } else {
+        document.execCommand('insertHTML',false,`<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`);
+      }
+    }
+    checkEmpty();
+    savedRangeRef.current=null;
     setShowLink(false); setLinkUrl('');
   };
 
@@ -711,7 +751,7 @@ function RichComposer({onSend,placeholder,fileRef,onFileChange,attachments,onRem
           <TBtn icon={<Underline size={14}/>}   title="Underline (Ctrl+U)"   onClick={()=>exec('underline')}/>
           <TBtn icon={<Strikethrough size={14}/>} title="Strikethrough"      onClick={()=>exec('strikethrough')}/>
           <div className="mx-1 h-5 w-px bg-slate-200"/>
-          <TBtn icon={<Link size={14}/>}        title="Insert link"          onClick={()=>setShowLink(s=>!s)}/>
+          <TBtn icon={<Link size={14}/>}        title="Insert link"          onClick={()=>{saveSelection();setShowLink(s=>!s);}}/>
           <TBtn icon={<ListOrdered size={14}/>} title="Numbered list"        onClick={()=>exec('insertOrderedList')}/>
           <TBtn icon={<List size={14}/>}        title="Bullet list"          onClick={()=>exec('insertUnorderedList')}/>
           <div className="mx-1 h-5 w-px bg-slate-200"/>
@@ -807,11 +847,21 @@ function MsgRow({accounts,myId,msg,grouped,onReact,onThread,canThread,inThread,o
   const [confirmDelete,setConfirmDelete]=useState(false);
   const editRef=useRef(null);
   const hideRef=useRef(null);
+  const showMoreRef=useRef(false);
   const isDeleted=msg.deleted||msg.text==='[message deleted]';
-  const isOwn=msg.senderId===myId;
+  const isOwn=String(msg.senderId)===String(myId);
 
+  useEffect(()=>{ showMoreRef.current=showMore; },[showMore]);
+
+  // toolbar never auto-hides while the "more" dropdown is open —
+  // prevents the dropdown vanishing before Edit/Delete click registers
   const onEnter=useCallback(()=>{ clearTimeout(hideRef.current); setHover(true); },[]);
-  const onLeave=useCallback(()=>{ hideRef.current=setTimeout(()=>{ setHover(false); setPicker(false); },200); },[]);
+  const onLeave=useCallback(()=>{
+    hideRef.current=setTimeout(()=>{
+      if(showMoreRef.current) return; // keep toolbar+dropdown alive
+      setHover(false); setPicker(false);
+    },200);
+  },[]);
 
   const startEdit=()=>{
     setEditing(true);
@@ -897,16 +947,16 @@ function MsgRow({accounts,myId,msg,grouped,onReact,onThread,canThread,inThread,o
           <ToolBtn icon={<Forward size={16}/>}  title="Forward"         onClick={onForward}/>
           <ToolBtn icon={<Bookmark size={16}/>} title="Save"            onClick={()=>{}}/>
           {isOwn&&(
-            <div className="relative">
-              <ToolBtn icon={<MoreHorizontal size={16}/>} title="More" onClick={()=>setShowMore(p=>!p)}/>
+            <div className="relative" onMouseEnter={onEnter}>
+              <ToolBtn icon={<MoreHorizontal size={16}/>} title="More" onClick={()=>{onEnter();setShowMore(p=>!p);}}/>
               {showMore&&(
                 <>
-                  <div className="fixed inset-0 z-30" onClick={()=>setShowMore(false)}/>
-                  <div className="absolute right-0 top-9 z-40 w-44 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
-                    <button onClick={()=>{startEdit();setShowMore(false);}} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-50">
+                  <div className="fixed inset-0 z-30" onMouseDown={()=>setShowMore(false)}/>
+                  <div onMouseEnter={onEnter} className="absolute right-0 top-9 z-40 w-44 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
+                    <button onMouseDown={e=>{e.preventDefault();startEdit();setShowMore(false);}} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-50">
                       <Pencil size={14} className="text-slate-400"/> Edit message
                     </button>
-                    <button onClick={()=>{setConfirmDelete(true);setShowMore(false);}} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-sm text-rose-600 hover:bg-rose-50">
+                    <button onMouseDown={e=>{e.preventDefault();setConfirmDelete(true);setShowMore(false);setHover(false);}} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-sm text-rose-600 hover:bg-rose-50">
                       <Trash2 size={14} className="text-rose-400"/> Delete message
                     </button>
                   </div>
