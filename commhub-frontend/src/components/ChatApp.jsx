@@ -266,7 +266,7 @@ function ProfilePanel({user,onClose,onSave}){
   const save=async()=>{
     setSaving(true);
     try{ const {data}=await api.patch('/api/users/me',{name,title,color}); onSave(data); onClose(); }
-    catch(){ alert('Save failed'); }
+    catch{ alert('Save failed'); }
     setSaving(false);
   };
   const uploadPhoto=async e=>{
@@ -277,7 +277,7 @@ function ProfilePanel({user,onClose,onSave}){
       const {data:fData}=await api.post('/api/files',{name:f.name,mimeType:f.type,sizeBytes:f.size,data:b64});
       const {data:uData}=await api.patch('/api/users/me',{avatarFileId:fData.fileId});
       onSave(uData);
-    }catch(){ alert('Photo upload failed'); }
+    }catch{ alert('Photo upload failed'); }
     setPhotoUp(false);
   };
   return (
