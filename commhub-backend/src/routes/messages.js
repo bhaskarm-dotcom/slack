@@ -97,3 +97,34 @@ router.post('/:id/react', async (req, res) => {
 });
 
 module.exports = router;
+
+/* PATCH /api/messages/:id — edit */
+router.patch('/:id', async (req, res) => {
+  const { text } = req.body;
+  if (!text?.trim()) return res.status(400).json({ error: 'text required' });
+  try {
+    const { rows } = await db.query(
+      `UPDATE messages SET text=$1, edited_at=NOW()
+       WHERE id=$2 AND sender_id=$3 AND deleted=FALSE
+       RETURNING id, channel_id AS "channelId", text,
+                 EXTRACT(EPOCH FROM edited_at)*1000 AS "editedAt"`,
+      [text.trim(), req.params.id, req.user.id]
+    );
+    if (!rows.length) return res.status(403).json({ error: 'Not found or not yours' });
+    res.json({ ...rows[0], editedAt: parseFloat(rows[0].editedAt) });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Server error' }); }
+});
+
+/* DELETE /api/messages/:id */
+router.delete('/:id', async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      `UPDATE messages SET deleted=TRUE, text='[message deleted]'
+       WHERE id=$1 AND sender_id=$2
+       RETURNING id, channel_id AS "channelId"`,
+      [req.params.id, req.user.id]
+    );
+    if (!rows.length) return res.status(403).json({ error: 'Not found or not yours' });
+    res.json({ id: req.params.id, channelId: rows[0].channelId });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Server error' }); }
+});

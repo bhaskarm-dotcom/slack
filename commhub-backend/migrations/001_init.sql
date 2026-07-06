@@ -49,3 +49,17 @@ CREATE INDEX IF NOT EXISTS idx_messages_channel  ON messages(channel_id, created
 CREATE INDEX IF NOT EXISTS idx_messages_parent   ON messages(parent_id);
 CREATE INDEX IF NOT EXISTS idx_channel_members_u ON channel_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_reactions_message ON reactions(message_id);
+
+/* ── v2 additions (safe to re-run) ── */
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE TABLE IF NOT EXISTS files (
+  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  name        TEXT NOT NULL,
+  mime_type   TEXT NOT NULL DEFAULT 'application/octet-stream',
+  size_bytes  BIGINT NOT NULL DEFAULT 0,
+  data        TEXT NOT NULL,
+  uploaded_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

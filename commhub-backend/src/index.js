@@ -10,6 +10,7 @@ const messageRoutes = require('./routes/messages');
 const userRoutes    = require('./routes/users');
 const { authenticateToken } = require('./middleware/auth');
 const { setupSocket } = require('./socket');
+const fileRoutes    = require('./routes/files');
 
 const app    = express();
 const server = http.createServer(app);
@@ -29,6 +30,7 @@ app.use('/api/auth',     authRoutes);
 app.use('/api/channels', authenticateToken, channelRoutes);
 app.use('/api/messages', authenticateToken, messageRoutes);
 app.use('/api/users',    authenticateToken, userRoutes);
+app.use('/api/files',    authenticateToken, fileRoutes);
 
 setupSocket(io);
 
