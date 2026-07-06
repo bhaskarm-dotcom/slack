@@ -1,12 +1,14 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Hash, Lock, Search, Send, Smile, Paperclip, Plus, Phone, Video,
-         MoreHorizontal, X, ChevronDown, Reply, AtSign, Bold, Italic, Code,
+         MoreHorizontal, X, ChevronDown, Reply, AtSign, Bold, Italic,
+         Underline, Strikethrough, Link, List, ListOrdered, Code,
          CornerDownLeft, LogOut, Loader2, Info, Star, EyeOff, Bell,
          ExternalLink, Columns2, UserCircle, FileText, Pencil, Trash2,
-         Forward, Bookmark, Download, Check, Camera } from 'lucide-react';
+         Forward, Bookmark, Download, Check, Camera, Terminal, Quote } from 'lucide-react';
 import api from '../lib/api';
 import { getSocket } from '../lib/socket';
 
+/* ── constants ── */
 const PRESENCE = {
   online:  { color: 'bg-emerald-400', label: 'Active' },
   away:    { color: 'bg-amber-400',   label: 'Away'   },
@@ -19,6 +21,70 @@ const COLORS = ['bg-teal-500','bg-indigo-500','bg-rose-500','bg-amber-500',
                 'bg-pink-500','bg-sky-500','bg-lime-600','bg-slate-600'];
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
+/* ── Rich text styles (injected once) ── */
+const RICH_CSS = `
+.rich-content b,.rich-content strong{font-weight:600}
+.rich-content i,.rich-content em{font-style:italic}
+.rich-content u{text-decoration:underline}
+.rich-content s,.rich-content strike,.rich-content del{text-decoration:line-through}
+.rich-content a{color:#0d9488;text-decoration:underline}
+.rich-content a:hover{color:#0f766e}
+.rich-content ul{list-style:disc;padding-left:1.5em;margin:0.25em 0}
+.rich-content ol{list-style:decimal;padding-left:1.5em;margin:0.25em 0}
+.rich-content li{margin:0.1em 0}
+.rich-content blockquote{border-left:3px solid #cbd5e1;padding-left:0.75em;color:#64748b;margin:0.25em 0;font-style:italic}
+.rich-content code{background:#f1f5f9;color:#e11d48;padding:0.1em 0.35em;border-radius:4px;font-family:monospace;font-size:0.875em}
+.rich-content pre{background:#1e293b;color:#e2e8f0;padding:0.75em 1em;border-radius:8px;overflow-x:auto;margin:0.25em 0;font-size:0.875em}
+.rich-content pre code{background:none;color:inherit;padding:0}
+.rich-content p{margin:0}
+.rich-editor{outline:none;min-height:24px}
+.rich-editor:empty:before{content:attr(data-ph);color:#94a3b8;pointer-events:none;display:block}
+.rich-editor ul{list-style:disc;padding-left:1.5em}
+.rich-editor ol{list-style:decimal;padding-left:1.5em}
+.rich-editor blockquote{border-left:3px solid #cbd5e1;padding-left:0.75em;color:#64748b;font-style:italic}
+.rich-editor code{background:#f1f5f9;color:#e11d48;padding:0.1em 0.35em;border-radius:4px;font-family:monospace;font-size:0.875em}
+.rich-editor pre{background:#1e293b;color:#e2e8f0;padding:0.75em 1em;border-radius:8px;overflow-x:auto;font-size:0.875em}
+.rich-editor pre code{background:none;color:inherit;padding:0}
+.rich-editor a{color:#0d9488;text-decoration:underline}
+`;
+
+function injectStyles() {
+  if (document.getElementById('commhub-rich-css')) return;
+  const s = document.createElement('style');
+  s.id = 'commhub-rich-css';
+  s.textContent = RICH_CSS;
+  document.head.appendChild(s);
+}
+
+/* ── HTML sanitizer ── */
+const SAFE_TAGS = new Set(['b','strong','i','em','u','s','strike','del','a','ul','ol','li',
+  'blockquote','code','pre','br','p','div','span']);
+
+function sanitize(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  function clean(node) {
+    if (node.nodeType === 3) return; // text node
+    if (node.nodeType !== 1) { node.parentNode?.removeChild(node); return; }
+    const tag = node.tagName.toLowerCase();
+    if (!SAFE_TAGS.has(tag)) {
+      const frag = document.createDocumentFragment();
+      [...node.childNodes].forEach(c => frag.appendChild(c));
+      node.parentNode?.replaceChild(frag, node);
+      [...frag.childNodes].forEach(clean);
+      return;
+    }
+    [...node.attributes].forEach(a => {
+      if (tag === 'a' && (a.name === 'href' || a.name === 'target' || a.name === 'rel')) return;
+      node.removeAttribute(a.name);
+    });
+    if (tag === 'a') { node.setAttribute('target','_blank'); node.setAttribute('rel','noopener noreferrer'); }
+    [...node.childNodes].forEach(clean);
+  }
+  [...doc.body.childNodes].forEach(clean);
+  return doc.body.innerHTML;
+}
+
+/* ── helpers ── */
 const parseT  = t => parseFloat(t) || 0;
 const fmtTime = t => { const n=parseT(t); return n?new Date(n).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'' };
 const fmtDay  = t => {
@@ -30,7 +96,9 @@ const fmtDay  = t => {
   return d.toLocaleDateString([],{weekday:'long',month:'long',day:'numeric'});
 };
 const fmtSize = b => b>1048576?`${(b/1048576).toFixed(1)} MB`:`${(b/1024).toFixed(0)} KB`;
+const isHtmlMsg = t => /<[a-z][\s\S]*>/i.test(t) && !t.startsWith('[FILE:');
 
+/* ── File download ── */
 async function downloadFile(fileId, fileName) {
   try {
     const token = localStorage.getItem('commhub_token');
@@ -57,6 +125,7 @@ function DownloadButton({ fileId, name, size }) {
   );
 }
 
+/* ── renderText — handles FILE markers + markdown (legacy) ── */
 function renderText(text) {
   if(!text) return null;
   const parts=[], fileRe=/\[FILE:([^:]+):([^:]+):(\d+)\]/g, fmtRe=/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g;
@@ -87,6 +156,16 @@ function renderText(text) {
   return parts;
 }
 
+/* ── MessageContent: routes between HTML and plain text/FILE ── */
+function MessageContent({ text }) {
+  if (!text) return null;
+  if (text === '[message deleted]') return <span className="italic text-slate-400">[message deleted]</span>;
+  if (text.includes('[FILE:')) return <div className="flex flex-wrap gap-2">{renderText(text)}</div>;
+  if (isHtmlMsg(text)) return <div className="rich-content text-[15px] leading-relaxed" dangerouslySetInnerHTML={{ __html: sanitize(text) }}/>;
+  return <div className="text-[15px] leading-relaxed whitespace-pre-wrap text-slate-700">{renderText(text)}</div>;
+}
+
+/* ── Avatar ── */
 function Avatar({user,size='h-9 w-9',showPresence=true}){
   if(!user) return null;
   return (
@@ -187,7 +266,7 @@ function ProfilePanel({user,onClose,onSave}){
   const save=async()=>{
     setSaving(true);
     try{ const {data}=await api.patch('/api/users/me',{name,title,color}); onSave(data); onClose(); }
-    catch(e){ alert('Save failed'); }
+    catch(){ alert('Save failed'); }
     setSaving(false);
   };
   const uploadPhoto=async e=>{
@@ -198,7 +277,7 @@ function ProfilePanel({user,onClose,onSave}){
       const {data:fData}=await api.post('/api/files',{name:f.name,mimeType:f.type,sizeBytes:f.size,data:b64});
       const {data:uData}=await api.patch('/api/users/me',{avatarFileId:fData.fileId});
       onSave(uData);
-    }catch(e){alert('Photo upload failed');}
+    }catch(){ alert('Photo upload failed'); }
     setPhotoUp(false);
   };
   return (
@@ -240,6 +319,9 @@ function ProfilePanel({user,onClose,onSave}){
   );
 }
 
+/* ══════════════════════════════════════════════════════════
+   MAIN CHAT APP
+══════════════════════════════════════════════════════════ */
 export default function ChatApp({me:initMe,onLogout}){
   const socket=getSocket();
   const [me,setMe]=useState(initMe);
@@ -248,9 +330,7 @@ export default function ChatApp({me:initMe,onLogout}){
   const [messages,setMessages]=useState([]);
   const [activeId,setActiveId]=useState(null);
   const [threadOpen,setThreadOpen]=useState(null);
-  const [draft,setDraft]=useState('');
   const [search,setSearch]=useState('');
-  const [showEmoji,setShowEmoji]=useState(false);
   const [typing,setTyping]=useState({});
   const [callBanner,setCallBanner]=useState(null);
   const [loading,setLoading]=useState(true);
@@ -261,9 +341,9 @@ export default function ChatApp({me:initMe,onLogout}){
   const [attachments,setAttachments]=useState([]);
   const [forwardMsg,setForwardMsg]=useState(null);
   const scrollRef=useRef(null);
-  const inputRef=useRef(null);
   const fileRef=useRef(null);
 
+  useEffect(()=>{ injectStyles(); },[]);
   useEffect(()=>{ if('Notification' in window&&Notification.permission==='default') Notification.requestPermission(); },[]);
 
   const loadMessages=useCallback(async chId=>{
@@ -294,7 +374,7 @@ export default function ChatApp({me:initMe,onLogout}){
         setUnread(p=>({...p,[msg.channelId]:(p[msg.channelId]||0)+1}));
         if('Notification' in window&&Notification.permission==='granted'&&document.hidden){
           const sender=Object.values(accounts).find(u=>u.id===msg.senderId);
-          const n=new Notification(sender?.name||'New message',{body:msg.text?.slice(0,80),icon:'/favicon.ico'});
+          const n=new Notification(sender?.name||'New message',{body:new DOMParser().parseFromString(msg.text,'text/html').body.textContent?.slice(0,80),icon:'/favicon.ico'});
           n.onclick=()=>{window.focus();setActiveId(msg.channelId);n.close();};
         }
       }
@@ -328,8 +408,8 @@ export default function ChatApp({me:initMe,onLogout}){
   const dmUser=dmUserId?accounts[dmUserId]:null;
   const headerName=isDM?(dmUser?.name||'Direct message'):activeChannel?.name;
 
-  const sendMsg=useCallback((text,parentId=null)=>{
-    let clean=text.trim();
+  const sendMsg=useCallback((html,parentId=null)=>{
+    let clean=html.trim();
     if(attachments.length&&!parentId){
       const tags=attachments.filter(a=>a.fileId).map(a=>`[FILE:${a.fileId}:${a.name}:${a.size}]`).join('\n');
       clean=[clean,tags].filter(Boolean).join('\n');
@@ -339,12 +419,6 @@ export default function ChatApp({me:initMe,onLogout}){
     socket?.emit('typing:stop',{channelId:activeId});
     setAttachments([]);
   },[activeId,attachments,socket]);
-
-  const handleTyping=val=>{
-    setDraft(val);
-    if(val) socket?.emit('typing:start',{channelId:activeId});
-    else socket?.emit('typing:stop',{channelId:activeId});
-  };
 
   const toggleReact=(msgId,emoji,parentId=null)=>{
     socket?.emit('reaction:toggle',{messageId:msgId,channelId:activeId,emoji});
@@ -376,18 +450,13 @@ export default function ChatApp({me:initMe,onLogout}){
     else setActiveDMUserId(null);
   };
 
-  const createChannel=()=>{
-    const name=window.prompt('New channel name:'); if(!name) return;
-    socket?.emit('channel:create',{name,type:'public',topic:''});
-  };
-
+  const createChannel=()=>{ const name=window.prompt('New channel name:'); if(!name) return; socket?.emit('channel:create',{name,type:'public',topic:''}); };
   const openDM=async userId=>{
     const {data}=await api.get(`/api/channels/dm/${userId}`);
     if(!channels.find(c=>c.id===data.id)) setChannels(p=>[...p,data]);
     socket?.emit('channel:join',{channelId:data.id});
     setActiveDMUserId(userId); setActiveId(data.id);
   };
-
   const onFileChange=async e=>{
     const files=Array.from(e.target.files||[]); if(!files.length) return; e.target.value='';
     for(const f of files){
@@ -409,6 +478,7 @@ export default function ChatApp({me:initMe,onLogout}){
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-white text-slate-800 antialiased" style={{fontFamily:"ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif"}}>
+      {/* Rail */}
       <nav className="flex w-16 shrink-0 flex-col items-center gap-3 bg-slate-900 py-4">
         <div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-teal-400 to-teal-600 font-bold text-white shadow-lg shadow-teal-900/40">CH</div>
         <div className="h-px w-8 bg-slate-700"/>
@@ -420,6 +490,7 @@ export default function ChatApp({me:initMe,onLogout}){
         </div>
       </nav>
 
+      {/* Sidebar */}
       <aside className="flex w-64 shrink-0 flex-col bg-slate-800 text-slate-300">
         <div className="flex items-center justify-between border-b border-slate-700/60 px-4 py-3.5">
           <div className="min-w-0">
@@ -462,6 +533,7 @@ export default function ChatApp({me:initMe,onLogout}){
         </div>
       </aside>
 
+      {/* Main */}
       <main className="flex min-w-0 flex-1 flex-col bg-white">
         <header className="relative flex items-center justify-between border-b border-slate-200 px-5 py-3">
           <div className="flex min-w-0 items-center gap-2.5">
@@ -520,11 +592,14 @@ export default function ChatApp({me:initMe,onLogout}){
           )}
         </div>
 
-        <Composer value={draft} setValue={handleTyping} onSend={t=>{sendMsg(t);setDraft('');setShowEmoji(false);}}
+        <RichComposer
+          onSend={sendMsg}
           placeholder={isDM?`Message ${headerName}`:`Message #${activeChannel?.name}`}
-          showEmoji={showEmoji} setShowEmoji={setShowEmoji} onEmoji={e=>setDraft(d=>d+e)}
-          inputRef={inputRef} fileRef={fileRef} onFileChange={onFileChange}
-          attachments={attachments} onRemoveAttachment={i=>setAttachments(p=>p.filter((_,j)=>j!==i))}/>
+          fileRef={fileRef} onFileChange={onFileChange}
+          attachments={attachments} onRemoveAttachment={i=>setAttachments(p=>p.filter((_,j)=>j!==i))}
+          onTypingStart={()=>socket?.emit('typing:start',{channelId:activeId})}
+          onTypingStop={()=>socket?.emit('typing:stop',{channelId:activeId})}
+        />
       </main>
 
       {threadParent&&(
@@ -539,27 +614,224 @@ export default function ChatApp({me:initMe,onLogout}){
   );
 }
 
-/* ── MsgRow — hover toolbar stays open via delay + onMouseEnter ── */
+/* ══════════════════════════════════════════════════════════
+   RICH COMPOSER
+══════════════════════════════════════════════════════════ */
+function RichComposer({onSend,placeholder,fileRef,onFileChange,attachments,onRemoveAttachment,onTypingStart,onTypingStop}){
+  const editorRef=useRef(null);
+  const [isEmpty,setIsEmpty]=useState(true);
+  const [showEmoji,setShowEmoji]=useState(false);
+  const [showLink,setShowLink]=useState(false);
+  const [linkUrl,setLinkUrl]=useState('');
+  const uploading=attachments.some(a=>a.uploading);
+
+  const exec=cmd=>{
+    editorRef.current?.focus();
+    document.execCommand(cmd,false,null);
+    checkEmpty();
+  };
+
+  const checkEmpty=()=>{
+    const text=editorRef.current?.textContent?.trim()||'';
+    const html=editorRef.current?.innerHTML||'';
+    setIsEmpty(!text&&html!=='<br>'&&!html.includes('<'));
+  };
+
+  const getHtml=()=>{
+    const h=editorRef.current?.innerHTML||'';
+    return (h==='<br>'||h==='<div><br></div>') ? '' : h;
+  };
+
+  const handleSend=()=>{
+    const html=getHtml();
+    if(!html&&!attachments.filter(a=>a.fileId).length) return;
+    onSend(html||'');
+    if(editorRef.current){ editorRef.current.innerHTML=''; setIsEmpty(true); }
+    onTypingStop();
+  };
+
+  const handleKeyDown=e=>{
+    if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); handleSend(); return; }
+    onTypingStart();
+    setTimeout(checkEmpty,0);
+  };
+
+  const handlePaste=e=>{
+    e.preventDefault();
+    const html=e.clipboardData.getData('text/html');
+    const text=e.clipboardData.getData('text/plain');
+    if(html){ document.execCommand('insertHTML',false,sanitize(html)); }
+    else{ document.execCommand('insertText',false,text); }
+    checkEmpty();
+  };
+
+  const insertLink=()=>{
+    if(!linkUrl.trim()) return;
+    const url=linkUrl.startsWith('http')?linkUrl:'https://'+linkUrl;
+    editorRef.current?.focus();
+    document.execCommand('createLink',false,url);
+    setShowLink(false); setLinkUrl('');
+  };
+
+  const insertInlineCode=()=>{
+    const sel=window.getSelection();
+    if(!sel||!sel.rangeCount) return;
+    const range=sel.getRangeAt(0);
+    const text=range.toString()||'code';
+    const code=document.createElement('code');
+    code.textContent=text;
+    range.deleteContents(); range.insertNode(code);
+    editorRef.current?.focus();
+    checkEmpty();
+  };
+
+  const insertCodeBlock=()=>{
+    const sel=window.getSelection();
+    if(!sel||!sel.rangeCount) return;
+    const range=sel.getRangeAt(0);
+    const text=range.toString()||'// code here';
+    const pre=document.createElement('pre');
+    const code=document.createElement('code');
+    code.textContent=text; pre.appendChild(code);
+    range.deleteContents(); range.insertNode(pre);
+    editorRef.current?.focus();
+    checkEmpty();
+  };
+
+  const canSend=!isEmpty||attachments.filter(a=>a.fileId).length>0;
+
+  return (
+    <div className="px-3 pb-3 pt-1">
+      <div className="rounded-xl border border-slate-200 transition focus-within:border-teal-400 focus-within:ring-2 focus-within:ring-teal-100">
+
+        {/* ── Toolbar ── */}
+        <div className="flex flex-wrap items-center gap-0.5 border-b border-slate-100 px-2 py-1.5">
+          <TBtn icon={<Bold size={14}/>}        title="Bold (Ctrl+B)"        onClick={()=>exec('bold')}/>
+          <TBtn icon={<Italic size={14}/>}      title="Italic (Ctrl+I)"      onClick={()=>exec('italic')}/>
+          <TBtn icon={<Underline size={14}/>}   title="Underline (Ctrl+U)"   onClick={()=>exec('underline')}/>
+          <TBtn icon={<Strikethrough size={14}/>} title="Strikethrough"      onClick={()=>exec('strikethrough')}/>
+          <div className="mx-1 h-5 w-px bg-slate-200"/>
+          <TBtn icon={<Link size={14}/>}        title="Insert link"          onClick={()=>setShowLink(s=>!s)}/>
+          <TBtn icon={<ListOrdered size={14}/>} title="Numbered list"        onClick={()=>exec('insertOrderedList')}/>
+          <TBtn icon={<List size={14}/>}        title="Bullet list"          onClick={()=>exec('insertUnorderedList')}/>
+          <div className="mx-1 h-5 w-px bg-slate-200"/>
+          <TBtn icon={<Quote size={14}/>}       title="Block quote"          onClick={()=>{ editorRef.current?.focus(); document.execCommand('formatBlock',false,'blockquote'); checkEmpty(); }}/>
+          <TBtn icon={<Code size={14}/>}        title="Inline code"          onClick={insertInlineCode}/>
+          <TBtn icon={<Terminal size={14}/>}    title="Code block"           onClick={insertCodeBlock}/>
+        </div>
+
+        {/* ── Link input ── */}
+        {showLink&&(
+          <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2">
+            <input value={linkUrl} onChange={e=>setLinkUrl(e.target.value)}
+              onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();insertLink();}if(e.key==='Escape')setShowLink(false);}}
+              placeholder="https://example.com" autoFocus
+              className="flex-1 rounded-lg border border-slate-200 px-3 py-1.5 text-sm outline-none focus:border-teal-400"/>
+            <button onClick={insertLink} className="rounded-lg bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-700">Add link</button>
+            <button onClick={()=>setShowLink(false)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-500 hover:bg-slate-50">Cancel</button>
+          </div>
+        )}
+
+        {/* ── Attachments ── */}
+        {attachments.length>0&&(
+          <div className="flex flex-wrap gap-1.5 border-b border-slate-100 px-3 py-2">
+            {attachments.map((f,i)=>(
+              <div key={i} className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs ${f.uploading?'border-amber-200 bg-amber-50 text-amber-700':'border-slate-200 bg-slate-50 text-slate-700'}`}>
+                {f.uploading?<Loader2 size={11} className="animate-spin"/>:<Paperclip size={11} className="text-slate-400"/>}
+                <span className="max-w-[120px] truncate font-medium">{f.name}</span>
+                <span className="text-slate-400">{fmtSize(f.size)}</span>
+                {!f.uploading&&<button onMouseDown={e=>{e.preventDefault();onRemoveAttachment(i);}} className="ml-1 text-slate-400 hover:text-rose-500"><X size={11}/></button>}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── Editor ── */}
+        <div
+          ref={editorRef}
+          contentEditable
+          suppressContentEditableWarning
+          data-ph={placeholder}
+          onInput={checkEmpty}
+          onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
+          className="rich-editor max-h-40 overflow-y-auto px-3 py-2.5 text-[15px] text-slate-800"
+        />
+
+        {/* ── Bottom bar ── */}
+        <div className="relative flex items-center justify-between px-2 py-1.5">
+          <div className="flex items-center gap-0.5">
+            <FmtBtn icon={<Plus size={17}/>} onClick={()=>{}}/>
+            <input ref={fileRef} type="file" multiple className="hidden" onChange={onFileChange}/>
+            <FmtBtn icon={<Paperclip size={16}/>} onClick={()=>fileRef.current?.click()} title="Attach file"/>
+            <FmtBtn icon={<Smile size={16}/>} onClick={()=>setShowEmoji(s=>!s)} title="Emoji"/>
+            <FmtBtn icon={<AtSign size={16}/>} onClick={()=>{ editorRef.current?.focus(); document.execCommand('insertText',false,'@'); }} title="Mention"/>
+          </div>
+          <button onClick={handleSend} disabled={!canSend||uploading}
+            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold transition ${canSend&&!uploading?'bg-teal-600 text-white hover:bg-teal-700':'bg-slate-100 text-slate-400'}`}>
+            {uploading?<Loader2 size={14} className="animate-spin"/>:<Send size={14}/>}
+            {uploading?'Uploading…':'Send'}
+          </button>
+          {showEmoji&&(
+            <div className="absolute bottom-11 right-2 z-10 grid grid-cols-6 gap-0.5 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg">
+              {EMOJIS.map(e=>(
+                <button key={e} onClick={()=>{ editorRef.current?.focus(); document.execCommand('insertText',false,e); setShowEmoji(false); checkEmpty(); }}
+                  className="grid h-8 w-8 place-items-center rounded-md text-lg hover:bg-slate-100">{e}</button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      <p className="mt-1 flex items-center gap-1 px-1 text-[11px] text-slate-400"><CornerDownLeft size={11}/> Enter to send · Shift+Enter new line · Select text then click B / I / U</p>
+    </div>
+  );
+}
+function TBtn({icon,onClick,title}){
+  return <button onMouseDown={e=>{e.preventDefault();onClick();}} title={title}
+    className="grid h-7 w-7 place-items-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition text-[13px] font-semibold">{icon}</button>;
+}
+function FmtBtn({icon,onClick,title}){
+  return <button onMouseDown={e=>{e.preventDefault();onClick?.();}} title={title}
+    className="grid h-7 w-7 place-items-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-700">{icon}</button>;
+}
+
+/* ══════════════════════════════════════════════════════════
+   MESSAGE ROW
+══════════════════════════════════════════════════════════ */
 function MsgRow({accounts,myId,msg,grouped,onReact,onThread,canThread,inThread,onEdit,onDelete,onForward}){
   const u=accounts[msg.senderId]||{initials:'?',color:'bg-slate-400',name:'Unknown',presence:'offline'};
   const [hover,setHover]=useState(false);
   const [picker,setPicker]=useState(false);
   const [editing,setEditing]=useState(false);
-  const [editVal,setEditVal]=useState('');
   const [showMore,setShowMore]=useState(false);
   const [confirmDelete,setConfirmDelete]=useState(false);
+  const editRef=useRef(null);
   const hideRef=useRef(null);
   const isDeleted=msg.deleted||msg.text==='[message deleted]';
   const isOwn=msg.senderId===myId;
 
-  // Delay-based hover: toolbar is at -top-4 so physically outside parent box.
-  // Without delay, moving mouse UP to toolbar triggers onMouseLeave → toolbar closes.
   const onEnter=useCallback(()=>{ clearTimeout(hideRef.current); setHover(true); },[]);
   const onLeave=useCallback(()=>{ hideRef.current=setTimeout(()=>{ setHover(false); setPicker(false); },200); },[]);
 
-  const startEdit=()=>{ setEditVal(msg.text); setEditing(true); };
-  const submitEdit=()=>{ if(editVal.trim()&&editVal!==msg.text) onEdit(msg.id,editVal); setEditing(false); };
-  const cancelEdit=()=>setEditing(false);
+  const startEdit=()=>{
+    setEditing(true);
+    setTimeout(()=>{
+      if(editRef.current){
+        editRef.current.innerHTML=msg.text;
+        editRef.current.focus();
+        // place cursor at end
+        const range=document.createRange(); range.selectNodeContents(editRef.current); range.collapse(false);
+        const sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+      }
+    },50);
+  };
+
+  const submitEdit=()=>{
+    const html=editRef.current?.innerHTML||'';
+    const clean=(html==='<br>'||html==='<div><br></div>')?'':html;
+    if(clean&&clean!==msg.text) onEdit(msg.id,clean);
+    setEditing(false);
+  };
 
   return (
     <div onMouseEnter={onEnter} onMouseLeave={onLeave}
@@ -579,18 +851,16 @@ function MsgRow({accounts,myId,msg,grouped,onReact,onThread,canThread,inThread,o
 
         {editing?(
           <div className="mt-1">
-            <textarea value={editVal} onChange={e=>setEditVal(e.target.value)}
-              onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();submitEdit();}if(e.key==='Escape')cancelEdit();}}
-              className="w-full rounded-lg border border-teal-400 bg-white px-3 py-2 text-[15px] outline-none ring-2 ring-teal-100" rows={2} autoFocus/>
+            <div ref={editRef} contentEditable suppressContentEditableWarning
+              onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();submitEdit();}if(e.key==='Escape')setEditing(false);}}
+              className="rich-editor w-full rounded-lg border border-teal-400 bg-white px-3 py-2 text-[15px] ring-2 ring-teal-100 min-h-[36px]"/>
             <div className="mt-1.5 flex gap-2">
               <button onClick={submitEdit} className="flex items-center gap-1 rounded-md bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-700"><Check size={12}/> Save</button>
-              <button onClick={cancelEdit} className="rounded-md border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50">Cancel</button>
+              <button onClick={()=>setEditing(false)} className="rounded-md border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50">Cancel</button>
             </div>
           </div>
         ):(
-          <div className={`text-[15px] leading-relaxed whitespace-pre-wrap ${isDeleted?'italic text-slate-400':'text-slate-700'}`}>
-            {renderText(msg.text)}
-          </div>
+          <MessageContent text={msg.text}/>
         )}
 
         {!isDeleted&&msg.reactions?.length>0&&(
@@ -619,7 +889,6 @@ function MsgRow({accounts,myId,msg,grouped,onReact,onThread,canThread,inThread,o
         )}
       </div>
 
-      {/* Hover toolbar — onMouseEnter cancels the hide timeout so it stays open */}
       {hover&&!editing&&!isDeleted&&(
         <div onMouseEnter={onEnter} onMouseLeave={onLeave}
           className="absolute -top-4 right-3 flex items-center gap-0.5 rounded-xl border border-slate-200 bg-white p-1 shadow-md">
@@ -658,65 +927,27 @@ function MsgRow({accounts,myId,msg,grouped,onReact,onThread,canThread,inThread,o
 }
 function ToolBtn({icon,onClick,title}){return <button onMouseDown={e=>{e.preventDefault();onClick();}} title={title} className="grid h-8 w-8 place-items-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition">{icon}</button>;}
 
-function Composer({value,setValue,onSend,placeholder,showEmoji,setShowEmoji,onEmoji,inputRef,fileRef,onFileChange,attachments,onRemoveAttachment}){
-  const onKey=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();onSend(value);}};
-  const wrap=(a,b=a)=>{
-    const ta=inputRef.current; if(!ta) return;
-    const s=ta.selectionStart,en=ta.selectionEnd;
-    const sel=value.slice(s,en)||'text';
-    setValue(value.slice(0,s)+a+sel+b+value.slice(en));
-    requestAnimationFrame(()=>{ta.focus();ta.setSelectionRange(s+a.length,s+a.length+sel.length);});
-  };
-  const canSend=value.trim()||attachments.filter(a=>a.fileId).length>0;
-  const uploading=attachments.some(a=>a.uploading);
-  return (
-    <div className="px-3 pb-3 pt-1">
-      <div className="rounded-xl border border-slate-200 transition focus-within:border-teal-400 focus-within:ring-2 focus-within:ring-teal-100">
-        <div className="flex items-center gap-0.5 border-b border-slate-100 px-2 py-1">
-          <FmtBtn icon={<Bold size={14}/>} onClick={()=>wrap('**')} title="Bold"/>
-          <FmtBtn icon={<Italic size={14}/>} onClick={()=>wrap('*')} title="Italic"/>
-          <FmtBtn icon={<Code size={14}/>} onClick={()=>wrap('`')} title="Code"/>
-        </div>
-        {attachments.length>0&&(
-          <div className="flex flex-wrap gap-1.5 border-b border-slate-100 px-3 py-2">
-            {attachments.map((f,i)=>(
-              <div key={i} className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs ${f.uploading?'border-amber-200 bg-amber-50 text-amber-700':'border-slate-200 bg-slate-50 text-slate-700'}`}>
-                {f.uploading?<Loader2 size={11} className="animate-spin"/>:<Paperclip size={11} className="text-slate-400"/>}
-                <span className="max-w-[120px] truncate font-medium">{f.name}</span>
-                <span className="text-slate-400">{fmtSize(f.size)}</span>
-                {!f.uploading&&<button onMouseDown={e=>{e.preventDefault();onRemoveAttachment(i);}} className="ml-1 text-slate-400 hover:text-rose-500"><X size={11}/></button>}
-              </div>
-            ))}
-          </div>
-        )}
-        <textarea ref={inputRef} rows={1} value={value} onChange={e=>setValue(e.target.value)} onKeyDown={onKey}
-          placeholder={placeholder} className="block max-h-32 w-full resize-none bg-transparent px-3 py-2.5 text-[15px] outline-none placeholder:text-slate-400"/>
-        <div className="relative flex items-center justify-between px-2 py-1.5">
-          <div className="flex items-center gap-0.5">
-            <FmtBtn icon={<Plus size={17}/>}/>
-            <input ref={fileRef} type="file" multiple className="hidden" onChange={onFileChange}/>
-            <FmtBtn icon={<Paperclip size={16}/>} onClick={()=>fileRef.current?.click()} title="Attach file"/>
-            <FmtBtn icon={<Smile size={16}/>} onClick={()=>setShowEmoji(s=>!s)}/>
-            <FmtBtn icon={<AtSign size={16}/>} onClick={()=>setValue(value+'@')}/>
-          </div>
-          <button onClick={()=>onSend(value)} disabled={!canSend||uploading}
-            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold transition ${canSend&&!uploading?'bg-teal-600 text-white hover:bg-teal-700':'bg-slate-100 text-slate-400'}`}>
-            {uploading?<Loader2 size={14} className="animate-spin"/>:<Send size={14}/>}
-            {uploading?'Uploading…':'Send'}
-          </button>
-          {showEmoji&&<div className="absolute bottom-11 right-2 z-10 grid grid-cols-6 gap-0.5 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg">{EMOJIS.map(e=><button key={e} onClick={()=>onEmoji(e)} className="grid h-8 w-8 place-items-center rounded-md text-lg hover:bg-slate-100">{e}</button>)}</div>}
-        </div>
-      </div>
-      <p className="mt-1 flex items-center gap-1 px-1 text-[11px] text-slate-400"><CornerDownLeft size={11}/> Enter to send · Shift+Enter new line · **bold** *italic* `code`</p>
-    </div>
-  );
-}
-function FmtBtn({icon,onClick,title}){return <button onMouseDown={e=>{e.preventDefault();onClick?.();}} title={title} className="grid h-7 w-7 place-items-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-700">{icon}</button>;}
-
+/* ══════════════════════════════════════════════════════════
+   THREAD PANEL
+══════════════════════════════════════════════════════════ */
 function ThreadPanel({accounts,myId,parent,channelName,onClose,onSend,onReact,onEdit,onDelete,onForward}){
-  const [draft,setDraft]=useState('');
+  const editorRef=useRef(null);
+  const [isEmpty,setIsEmpty]=useState(true);
   const ref=useRef(null);
+
   useEffect(()=>{if(ref.current)ref.current.scrollTop=ref.current.scrollHeight;},[parent.thread?.length]);
+
+  const checkEmpty=()=>{
+    const text=editorRef.current?.textContent?.trim()||'';
+    setIsEmpty(!text);
+  };
+  const handleSend=()=>{
+    const html=editorRef.current?.innerHTML||'';
+    if(!html||html==='<br>') return;
+    onSend(html);
+    editorRef.current.innerHTML=''; setIsEmpty(true);
+  };
+
   return (
     <section className="flex w-96 shrink-0 flex-col border-l border-slate-200 bg-white">
       <header className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
@@ -738,12 +969,13 @@ function ThreadPanel({accounts,myId,parent,channelName,onClose,onSend,onReact,on
       </div>
       <div className="px-3 pb-3 pt-1">
         <div className="rounded-xl border border-slate-200 focus-within:border-teal-400 focus-within:ring-2 focus-within:ring-teal-100">
-          <textarea rows={1} value={draft} onChange={e=>setDraft(e.target.value)}
-            onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();if(draft.trim()){onSend(draft);setDraft('');}}}}
-            placeholder="Reply…" className="block max-h-28 w-full resize-none bg-transparent px-3 py-2.5 text-[15px] outline-none placeholder:text-slate-400"/>
+          <div ref={editorRef} contentEditable suppressContentEditableWarning data-ph="Reply…"
+            onInput={checkEmpty}
+            onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();handleSend();}}}
+            className="rich-editor max-h-28 overflow-y-auto px-3 py-2.5 text-[15px] text-slate-800"/>
           <div className="flex justify-end px-2 py-1.5">
-            <button onClick={()=>{if(draft.trim()){onSend(draft);setDraft('');}}} disabled={!draft.trim()}
-              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold ${draft.trim()?'bg-teal-600 text-white hover:bg-teal-700':'bg-slate-100 text-slate-400'}`}>
+            <button onClick={handleSend} disabled={isEmpty}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold ${!isEmpty?'bg-teal-600 text-white hover:bg-teal-700':'bg-slate-100 text-slate-400'}`}>
               <Send size={14}/> Reply
             </button>
           </div>
