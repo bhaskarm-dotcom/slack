@@ -331,7 +331,7 @@ function CallModal({ kind, roomName, displayName, isVideo, onClose }){
       // eslint-disable-next-line no-undef
       const JitsiMeetExternalAPI = window.JitsiMeetExternalAPI;
       if (!JitsiMeetExternalAPI) return;
-      apiRef.current = new JitsiMeetExternalAPI('meet.jit.si', {
+      apiRef.current = new JitsiMeetExternalAPI('meet.ffmuc.net', {
         roomName: roomName.replace(/[^a-zA-Z0-9-]/g,''),
         parentNode: containerRef.current,
         width: '100%',
@@ -355,7 +355,7 @@ function CallModal({ kind, roomName, displayName, isVideo, onClose }){
       if (!s) {
         s = document.createElement('script');
         s.id = 'jitsi-api-script';
-        s.src = 'https://meet.jit.si/external_api.js';
+        s.src = 'https://meet.ffmuc.net/external_api.js';
         s.async = true;
         document.body.appendChild(s);
       }
@@ -398,6 +398,7 @@ export default function ChatApp({me:initMe,onLogout}){
   const [search,setSearch]=useState('');
   const [typing,setTyping]=useState({});
   const [callBanner,setCallBanner]=useState(null);
+  const [incomingCall,setIncomingCall]=useState(null);
   const [loading,setLoading]=useState(true);
   const [showMenu,setShowMenu]=useState(false);
   const [showProfile,setShowProfile]=useState(false);
@@ -452,17 +453,27 @@ export default function ChatApp({me:initMe,onLogout}){
     const onPresence=({userId,presence})=>setAccounts(p=>({...p,[userId]:p[userId]?{...p[userId],presence}:p[userId]}));
     const onTypingStart=({userId,channelId})=>{if(channelId===activeId) setTyping(p=>({...p,[channelId]:new Set([...(p[channelId]||[]),userId])}));};
     const onTypingStop=({userId,channelId})=>{if(channelId===activeId) setTyping(p=>{const s=new Set(p[channelId]||[]);s.delete(userId);return{...p,[channelId]:s};});};
+    const onCallStart=({channelId,kind,from})=>{
+      if(from===me.name) return;
+      setIncomingCall({channelId,kind,from});
+      if('Notification' in window&&Notification.permission==='granted'){
+        const n=new Notification(`Incoming ${kind} call`,{body:`${from} is calling`,icon:'/favicon.ico'});
+        n.onclick=()=>{window.focus();n.close();};
+      }
+    };
     socket.on('message:new',onMsgNew); socket.on('message:edited',onMsgEdited);
     socket.on('message:deleted',onMsgDeleted); socket.on('thread:new',onThreadNew);
     socket.on('reaction:update',onReactUpdate); socket.on('channel:new',onChanNew);
     socket.on('user:presence',onPresence); socket.on('typing:start',onTypingStart);
     socket.on('typing:stop',onTypingStop);
+    socket.on('call:start',onCallStart);
     return()=>{
       socket.off('message:new',onMsgNew); socket.off('message:edited',onMsgEdited);
       socket.off('message:deleted',onMsgDeleted); socket.off('thread:new',onThreadNew);
       socket.off('reaction:update',onReactUpdate); socket.off('channel:new',onChanNew);
       socket.off('user:presence',onPresence); socket.off('typing:start',onTypingStart);
       socket.off('typing:stop',onTypingStop);
+      socket.off('call:start',onCallStart);
     };
   },[socket,activeId,accounts]);
 
@@ -515,6 +526,12 @@ export default function ChatApp({me:initMe,onLogout}){
     else setActiveDMUserId(null);
   };
 
+  const startCall=(kind)=>{
+    setCallBanner({kind});
+    // notify everyone else in this channel that a call started
+    socket?.emit('call:start',{ channelId:activeId, kind, from:me.name });
+  };
+
   const createChannel=()=>{ const name=window.prompt('New channel name:'); if(!name) return; socket?.emit('channel:create',{name,type:'public',topic:''}); };
   const openDM=async userId=>{
     const {data}=await api.get(`/api/channels/dm/${userId}`);
@@ -522,17 +539,19 @@ export default function ChatApp({me:initMe,onLogout}){
     socket?.emit('channel:join',{channelId:data.id});
     setActiveDMUserId(userId); setActiveId(data.id);
   };
-  const onFileChange=async e=>{
-    const files=Array.from(e.target.files||[]); if(!files.length) return; e.target.value='';
+  const uploadFiles=async(fileList)=>{
+    const files=Array.from(fileList||[]); if(!files.length) return;
     for(const f of files){
+      if(f.size>8*1024*1024){ alert(`"${f.name}" is ${(f.size/1048576).toFixed(1)}MB — max is 8MB`); continue; }
       setAttachments(p=>[...p,{name:f.name,size:f.size,type:f.type,uploading:true}]);
       try{
         const b64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=rej;r.readAsDataURL(f);});
         const {data}=await api.post('/api/files',{name:f.name,mimeType:f.type,sizeBytes:f.size,data:b64});
         setAttachments(p=>p.map(a=>a.name===f.name&&a.uploading?{...a,fileId:data.fileId,uploading:false}:a));
-      }catch{setAttachments(p=>p.filter(a=>!(a.name===f.name&&a.uploading)));}
+      }catch(err){ setAttachments(p=>p.filter(a=>!(a.name===f.name&&a.uploading))); alert(`Upload failed for "${f.name}"`); }
     }
   };
+  const onFileChange=async e=>{ await uploadFiles(e.target.files); e.target.value=''; };
 
   if(loading) return <div className="grid h-screen w-full place-items-center bg-white"><Loader2 className="animate-spin text-slate-400" size={24}/></div>;
 
@@ -612,8 +631,8 @@ export default function ChatApp({me:initMe,onLogout}){
             </div>
           </div>
           <div className="flex items-center gap-1">
-            <button onClick={()=>setCallBanner({kind:'voice'})} className="grid h-9 w-9 place-items-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-teal-600"><Phone size={17}/></button>
-            <button onClick={()=>setCallBanner({kind:'video'})} className="grid h-9 w-9 place-items-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-teal-600"><Video size={17}/></button>
+            <button onClick={()=>startCall('voice')} className="grid h-9 w-9 place-items-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-teal-600"><Phone size={17}/></button>
+            <button onClick={()=>startCall('video')} className="grid h-9 w-9 place-items-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-teal-600"><Video size={17}/></button>
             <div className="relative ml-1">
               <Search size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
               <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search" className="w-36 rounded-md border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-sm outline-none transition focus:w-48 focus:border-teal-400 focus:bg-white focus:ring-2 focus:ring-teal-100"/>
@@ -627,6 +646,20 @@ export default function ChatApp({me:initMe,onLogout}){
           <CallModal kind={callBanner.kind} roomName={`CommHub-${activeId}`}
             displayName={me.name} isVideo={callBanner.kind==='video'}
             onClose={()=>setCallBanner(null)}/>
+        )}
+        {incomingCall&&!callBanner&&(
+          <div className="flex items-center justify-between border-b border-teal-100 bg-teal-50 px-5 py-2.5 text-sm">
+            <span className="flex items-center gap-2 font-medium text-teal-800">
+              {incomingCall.kind==='video'?<Video size={16}/>:<Phone size={16}/>}
+              <span className="font-bold">{incomingCall.from}</span> started a {incomingCall.kind} call
+            </span>
+            <div className="flex gap-2">
+              <button onClick={()=>{setCallBanner({kind:incomingCall.kind});setActiveId(incomingCall.channelId);setIncomingCall(null);}}
+                className="rounded-md bg-teal-600 px-3 py-1 text-xs font-semibold text-white hover:bg-teal-700">Join</button>
+              <button onClick={()=>setIncomingCall(null)}
+                className="rounded-md border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50">Dismiss</button>
+            </div>
+          </div>
         )}
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-2 py-4">
@@ -659,7 +692,7 @@ export default function ChatApp({me:initMe,onLogout}){
         <RichComposer
           onSend={sendMsg}
           placeholder={isDM?`Message ${headerName}`:`Message #${activeChannel?.name}`}
-          fileRef={fileRef} onFileChange={onFileChange}
+          fileRef={fileRef} onFileChange={onFileChange} onDropFiles={uploadFiles}
           attachments={attachments} onRemoveAttachment={i=>setAttachments(p=>p.filter((_,j)=>j!==i))}
           onTypingStart={()=>socket?.emit('typing:start',{channelId:activeId})}
           onTypingStop={()=>socket?.emit('typing:stop',{channelId:activeId})}
@@ -681,8 +714,9 @@ export default function ChatApp({me:initMe,onLogout}){
 /* ══════════════════════════════════════════════════════════
    RICH COMPOSER
 ══════════════════════════════════════════════════════════ */
-function RichComposer({onSend,placeholder,fileRef,onFileChange,attachments,onRemoveAttachment,onTypingStart,onTypingStop}){
+function RichComposer({onSend,placeholder,fileRef,onFileChange,onDropFiles,attachments,onRemoveAttachment,onTypingStart,onTypingStop}){
   const editorRef=useRef(null);
+  const [dragOver,setDragOver]=useState(false);
   const savedRangeRef=useRef(null);
   const [isEmpty,setIsEmpty]=useState(true);
   const [showEmoji,setShowEmoji]=useState(false);
@@ -806,7 +840,17 @@ function RichComposer({onSend,placeholder,fileRef,onFileChange,attachments,onRem
 
   return (
     <div className="px-3 pb-3 pt-1">
-      <div className="rounded-xl border border-slate-200 transition focus-within:border-teal-400 focus-within:ring-2 focus-within:ring-teal-100">
+      <div
+        onDragOver={e=>{e.preventDefault();setDragOver(true);}}
+        onDragLeave={e=>{e.preventDefault();setDragOver(false);}}
+        onDrop={e=>{e.preventDefault();setDragOver(false);onDropFiles(e.dataTransfer.files);}}
+        className={`relative rounded-xl border transition focus-within:border-teal-400 focus-within:ring-2 focus-within:ring-teal-100 ${dragOver?'border-teal-400 border-dashed bg-teal-50/50':'border-slate-200'}`}>
+
+        {dragOver&&(
+          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-xl bg-teal-50/80">
+            <span className="flex items-center gap-2 text-sm font-semibold text-teal-700"><Paperclip size={16}/> Drop files to attach</span>
+          </div>
+        )}
 
         {/* ── Toolbar ── */}
         <div className="flex flex-wrap items-center gap-0.5 border-b border-slate-100 px-2 py-1.5">
