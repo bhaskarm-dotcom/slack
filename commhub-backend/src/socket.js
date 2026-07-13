@@ -178,6 +178,51 @@ function setupSocket(io) {
       } catch (err) { console.error(err); }
     });
 
+    /* ── Add members to an existing channel ── */
+    socket.on('channel:addMembers', async ({ channelId, memberIds }) => {
+      if (!channelId || !Array.isArray(memberIds) || !memberIds.length) return;
+      try {
+        // only a current member can add others
+        const isMember = await db.query(
+          `SELECT 1 FROM channel_members WHERE channel_id=$1 AND user_id=$2`,
+          [channelId, userId]
+        );
+        if (!isMember.rows.length) return;
+
+        for (const uid of memberIds) {
+          await db.query(
+            `INSERT INTO channel_members(channel_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING`,
+            [channelId, uid]
+          );
+        }
+        // fetch full channel + members
+        const chRes = await db.query(`SELECT id,name,type,topic FROM channels WHERE id=$1`,[channelId]);
+        if (!chRes.rows.length) return;
+        const memRes = await db.query(`SELECT user_id FROM channel_members WHERE channel_id=$1`,[channelId]);
+        const full = { ...chRes.rows[0], members: memRes.rows.map(r=>r.user_id) };
+
+        // notify + join the newly added sockets, and update existing members
+        const sockets = await io.fetchSockets();
+        const memberIdStrs = full.members.map(String);
+        for (const s of sockets) {
+          if (memberIdStrs.includes(String(s.data?.userId))) {
+            s.join(channelId);
+            s.emit('channel:new', full);
+          }
+        }
+      } catch (err) { console.error('addMembers error', err); }
+    });
+
+    /* ── Leave a channel ── */
+    socket.on('channel:leave', async ({ channelId }) => {
+      if (!channelId) return;
+      try {
+        await db.query(`DELETE FROM channel_members WHERE channel_id=$1 AND user_id=$2`,[channelId,userId]);
+        socket.leave(channelId);
+        socket.emit('channel:left', { channelId });
+      } catch (err) { console.error('leave error', err); }
+    });
+
     /* ── Typing indicators ── */
     socket.on('typing:start', ({ channelId }) => {
       socket.to(channelId).emit('typing:start', { userId, channelId });
