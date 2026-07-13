@@ -179,6 +179,112 @@ function Avatar({user,size='h-9 w-9',showPresence=true}){
   );
 }
 
+/* ── Create Channel Modal (2-step: name/topic → visibility + members) ── */
+function CreateChannelModal({teammates,onCreate,onClose}){
+  const [step,setStep]=useState(1);
+  const [name,setName]=useState('');
+  const [topic,setTopic]=useState('');
+  const [type,setType]=useState('public');
+  const [selected,setSelected]=useState([]);
+  const [q,setQ]=useState('');
+
+  const toggleMember=id=>setSelected(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
+  const canNext = name.trim().length>0;
+  const filtered = teammates.filter(u=>u.name.toLowerCase().includes(q.toLowerCase()));
+
+  const create=()=>{
+    if(!name.trim()) return;
+    onCreate({
+      name: name.trim(),
+      type,
+      topic: topic.trim(),
+      memberIds: type==='private' ? selected : [],
+    });
+  };
+
+  return (
+    <>
+      <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm" onClick={onClose}/>
+      <div className="fixed left-1/2 top-1/2 z-50 w-[440px] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white shadow-2xl">
+        {/* Header */}
+        <div className="flex items-start justify-between px-6 pt-6">
+          <div>
+            <h2 className="text-xl font-bold text-slate-900">Create a channel</h2>
+            {name&&<p className="mt-0.5 text-sm text-slate-400">#{name.trim().toLowerCase().replace(/\s+/g,'-')}</p>}
+          </div>
+          <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-md text-slate-400 hover:bg-slate-100"><X size={18}/></button>
+        </div>
+
+        {step===1?(
+          <div className="px-6 py-5">
+            <label className="block">
+              <span className="mb-1.5 block text-sm font-semibold text-slate-700">Name</span>
+              <div className="flex items-center rounded-lg border border-slate-200 px-3 focus-within:border-teal-400 focus-within:ring-2 focus-within:ring-teal-100">
+                <Hash size={15} className="text-slate-400"/>
+                <input value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. marketing" autoFocus
+                  onKeyDown={e=>{if(e.key==='Enter'&&canNext)setStep(2);}}
+                  className="w-full bg-transparent px-2 py-2.5 text-sm outline-none"/>
+              </div>
+            </label>
+            <label className="mt-4 block">
+              <span className="mb-1.5 block text-sm font-semibold text-slate-700">Topic <span className="font-normal text-slate-400">(optional)</span></span>
+              <input value={topic} onChange={e=>setTopic(e.target.value)} placeholder="What's this channel about?"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-teal-400 focus:ring-2 focus:ring-teal-100"/>
+            </label>
+            <div className="mt-6 flex items-center justify-between">
+              <span className="text-xs text-slate-400">Step 1 of 2</span>
+              <button onClick={()=>setStep(2)} disabled={!canNext}
+                className={`rounded-lg px-5 py-2 text-sm font-semibold ${canNext?'bg-teal-600 text-white hover:bg-teal-700':'bg-slate-100 text-slate-400'}`}>Next</button>
+            </div>
+          </div>
+        ):(
+          <div className="px-6 py-5">
+            <p className="mb-2 text-sm font-semibold text-slate-700">Visibility</p>
+            <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 p-3 hover:bg-slate-50">
+              <input type="radio" checked={type==='public'} onChange={()=>setType('public')} className="mt-0.5 accent-teal-600"/>
+              <div><p className="text-sm font-medium text-slate-800">Public — anyone can join</p><p className="text-xs text-slate-500">All members of the workspace will be added</p></div>
+            </label>
+            <label className="mt-2 flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 p-3 hover:bg-slate-50">
+              <input type="radio" checked={type==='private'} onChange={()=>setType('private')} className="mt-0.5 accent-teal-600"/>
+              <div><p className="text-sm font-medium text-slate-800">Private — only specific people</p><p className="text-xs text-slate-500">Only invited members can view or join</p></div>
+            </label>
+
+            {type==='private'&&(
+              <div className="mt-4">
+                <p className="mb-1.5 text-sm font-semibold text-slate-700">Add members {selected.length>0&&<span className="font-normal text-slate-400">({selected.length} selected)</span>}</p>
+                <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search people…"
+                  className="mb-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-teal-400 focus:ring-2 focus:ring-teal-100"/>
+                <div className="max-h-44 overflow-y-auto rounded-lg border border-slate-200">
+                  {filtered.length===0&&<p className="px-3 py-4 text-center text-xs text-slate-400">No people found</p>}
+                  {filtered.map(u=>(
+                    <button key={u.id} onClick={()=>toggleMember(u.id)}
+                      className="flex w-full items-center gap-2.5 px-3 py-2 text-sm hover:bg-slate-50">
+                      <Avatar user={u} size="h-7 w-7" showPresence={false}/>
+                      <span className="flex-1 text-left text-slate-700">{u.name}</span>
+                      <span className={`grid h-5 w-5 place-items-center rounded-md border ${selected.includes(u.id)?'border-teal-600 bg-teal-600 text-white':'border-slate-300'}`}>
+                        {selected.includes(u.id)&&<Check size={13}/>}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-6 flex items-center justify-between">
+              <span className="text-xs text-slate-400">Step 2 of 2</span>
+              <div className="flex gap-2">
+                <button onClick={()=>setStep(1)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Back</button>
+                <button onClick={create} disabled={type==='private'&&selected.length===0}
+                  className={`rounded-lg px-5 py-2 text-sm font-semibold ${!(type==='private'&&selected.length===0)?'bg-teal-600 text-white hover:bg-teal-700':'bg-slate-100 text-slate-400'}`}>Create</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
 function ContextMenu({onClose,isDM,targetName,starred,muted,hidden,onAction}){
   const items=[
     {icon:<Info size={15}/>,label:'Conversation details',action:'details',sub:true},
@@ -478,6 +584,7 @@ export default function ChatApp({me:initMe,onLogout}){
   const [showDetails,setShowDetails]=useState(false);
   const [summary,setSummary]=useState(null);
   const [showProfile,setShowProfile]=useState(false);
+  const [showCreateChannel,setShowCreateChannel]=useState(false);
   const [unread,setUnread]=useState({});
   const [activeDMUserId,setActiveDMUserId]=useState(null);
   const [attachments,setAttachments]=useState([]);
@@ -608,7 +715,11 @@ export default function ChatApp({me:initMe,onLogout}){
     socket?.emit('call:start',{ channelId:activeId, kind, from:me.name });
   };
 
-  const createChannel=()=>{ const name=window.prompt('New channel name:'); if(!name) return; socket?.emit('channel:create',{name,type:'public',topic:''}); };
+  const createChannel=()=>setShowCreateChannel(true);
+  const submitChannel=({name,type,topic,memberIds})=>{
+    socket?.emit('channel:create',{name,type,topic,memberIds});
+    setShowCreateChannel(false);
+  };
   const openDM=async userId=>{
     const {data}=await api.get(`/api/channels/dm/${userId}`);
     if(!channels.find(c=>c.id===data.id)) setChannels(p=>[...p,data]);
@@ -831,6 +942,7 @@ export default function ChatApp({me:initMe,onLogout}){
       {showProfile&&<ProfilePanel user={me} onClose={()=>setShowProfile(false)} onSave={updated=>{setMe(updated);setAccounts(p=>({...p,[updated.id]:updated}));}}/>}
       {showDetails&&<DetailsPanel isDM={isDM} dmUser={dmUser} channel={activeChannel} accounts={accounts} messageCount={messages.length} onClose={()=>setShowDetails(false)}/>}
       {summary&&<SummaryModal summary={summary} title={headerName} onClose={()=>setSummary(null)}/>}
+      {showCreateChannel&&<CreateChannelModal teammates={teammates} onCreate={submitChannel} onClose={()=>setShowCreateChannel(false)}/>}
     </div>
   );
 }
