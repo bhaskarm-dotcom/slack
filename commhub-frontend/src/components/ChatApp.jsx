@@ -4,7 +4,7 @@ import { Hash, Lock, Search, Send, Smile, Paperclip, Plus, Phone, Video,
          Underline, Strikethrough, Link, List, ListOrdered, Code,
          CornerDownLeft, LogOut, Loader2, Info, Star, EyeOff, Bell,
          ExternalLink, Columns2, UserCircle, FileText, Pencil, Trash2,
-         Forward, Bookmark, Download, Check, Camera, Terminal, Quote } from 'lucide-react';
+         Forward, Bookmark, Download, Check, Camera, Terminal, Quote, Copy } from 'lucide-react';
 import api from '../lib/api';
 import { getSocket } from '../lib/socket';
 
