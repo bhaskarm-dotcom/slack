@@ -179,20 +179,20 @@ function Avatar({user,size='h-9 w-9',showPresence=true}){
   );
 }
 
-function ContextMenu({onClose,isDM,targetName}){
+function ContextMenu({onClose,isDM,targetName,starred,muted,hidden,onAction}){
   const items=[
-    {icon:<Info size={15}/>,label:'Conversation details',sub:true},
-    {icon:<UserCircle size={15}/>,label:isDM?'View full profile':'View members'},
-    {icon:<Star size={15}/>,label:'Star conversation'},
-    {icon:<Bell size={15}/>,label:'Mute notifications'},
+    {icon:<Info size={15}/>,label:'Conversation details',action:'details',sub:true},
+    {icon:<UserCircle size={15}/>,label:isDM?'View full profile':'View members',action:'profile'},
+    {icon:<Star size={15}/>,label:starred?'Unstar conversation':'Star conversation',action:'star'},
+    {icon:<Bell size={15}/>,label:muted?'Unmute notifications':'Mute notifications',action:'mute'},
     null,
-    {icon:<FileText size={15}/>,label:'Summarize conversation',sub:true},
+    {icon:<FileText size={15}/>,label:'Summarize conversation',action:'summarize',sub:true},
     null,
-    {icon:<Columns2 size={15}/>,label:'Open in split view'},
-    {icon:<ExternalLink size={15}/>,label:'Open in new window'},
+    {icon:<ExternalLink size={15}/>,label:'Open in new window',action:'newwindow'},
     null,
-    {icon:<EyeOff size={15}/>,label:'Hide conversation',danger:true},
+    {icon:<EyeOff size={15}/>,label:hidden?'Unhide conversation':'Hide conversation',action:'hide',danger:true},
   ];
+  const handle=(action)=>{ onAction(action); if(action!=='star'&&action!=='mute') onClose(); };
   return (
     <>
       <div className="fixed inset-0 z-40" onClick={onClose}/>
@@ -204,10 +204,10 @@ function ContextMenu({onClose,isDM,targetName}){
         <div className="py-1.5">
           {items.map((item,i)=>item===null
             ?<div key={i} className="my-1 h-px bg-slate-100"/>
-            :<button key={i} onClick={onClose} className={`flex w-full items-center gap-3 px-4 py-2.5 text-sm transition hover:bg-slate-50 ${item.danger?'text-rose-500':'text-slate-700'}`}>
+            :<button key={i} onClick={()=>handle(item.action)} className={`flex w-full items-center gap-3 px-4 py-2.5 text-sm transition hover:bg-slate-50 ${item.danger?'text-rose-500':'text-slate-700'}`}>
               <span className={item.danger?'text-rose-400':'text-slate-400'}>{item.icon}</span>
               <span className="flex-1 text-left">{item.label}</span>
-              {item.sub&&<ChevronDown size={13} className="-rotate-90 text-slate-300"/>}
+              {(item.action==='star'&&starred)||(item.action==='mute'&&muted)?<Check size={14} className="text-teal-500"/>:item.sub?<ChevronDown size={13} className="-rotate-90 text-slate-300"/>:null}
             </button>
           )}
         </div>
@@ -319,6 +319,98 @@ function ProfilePanel({user,onClose,onSave}){
   );
 }
 
+/* ── Conversation Details / Profile panel ── */
+function DetailsPanel({isDM,dmUser,channel,accounts,messageCount,onClose}){
+  return (
+    <>
+      <div className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm" onClick={onClose}/>
+      <div className="fixed right-4 top-4 bottom-4 z-50 w-80 overflow-y-auto rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+          <h3 className="font-bold text-slate-900">{isDM?'Profile':'Conversation details'}</h3>
+          <button onClick={onClose} className="grid h-7 w-7 place-items-center rounded-md text-slate-400 hover:bg-slate-100"><X size={16}/></button>
+        </div>
+        <div className="p-5">
+          {isDM&&dmUser?(
+            <div className="text-center">
+              <div className="mx-auto"><Avatar user={dmUser} size="h-20 w-20" showPresence={false}/></div>
+              <h2 className="mt-3 text-lg font-bold text-slate-900">{dmUser.name}</h2>
+              {dmUser.title&&<p className="text-sm text-slate-500">{dmUser.title}</p>}
+              <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
+                <span className={`h-2 w-2 rounded-full ${PRESENCE[dmUser.presence]?.color||'bg-slate-400'}`}/>
+                {PRESENCE[dmUser.presence]?.label||'Offline'}
+              </div>
+              {dmUser.email&&<div className="mt-4 rounded-lg border border-slate-200 p-3 text-left"><p className="text-xs font-semibold text-slate-400">Email</p><p className="text-sm text-slate-700">{dmUser.email}</p></div>}
+              <div className="mt-2 rounded-lg border border-slate-200 p-3 text-left"><p className="text-xs font-semibold text-slate-400">Messages</p><p className="text-sm text-slate-700">{messageCount} in this conversation</p></div>
+            </div>
+          ):(
+            <div>
+              <div className="flex items-center gap-3">
+                <span className="grid h-12 w-12 place-items-center rounded-xl bg-slate-100 text-slate-500">{channel?.type==='private'?<Lock size={22}/>:<Hash size={22}/>}</span>
+                <div><h2 className="text-lg font-bold text-slate-900">{channel?.name}</h2><p className="text-xs text-slate-400">{channel?.type==='private'?'Private channel':'Public channel'}</p></div>
+              </div>
+              <div className="mt-4 rounded-lg border border-slate-200 p-3"><p className="text-xs font-semibold text-slate-400">Topic</p><p className="text-sm text-slate-700">{channel?.topic||'No topic set'}</p></div>
+              <div className="mt-2 rounded-lg border border-slate-200 p-3"><p className="text-xs font-semibold text-slate-400">Members</p><p className="text-sm text-slate-700">{channel?.members?.length||0} member{(channel?.members?.length||0)===1?'':'s'}</p></div>
+              <div className="mt-2 rounded-lg border border-slate-200 p-3"><p className="text-xs font-semibold text-slate-400">Messages</p><p className="text-sm text-slate-700">{messageCount} in this channel</p></div>
+              {channel?.members?.length>0&&(
+                <div className="mt-4">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Members</p>
+                  <div className="space-y-1.5">
+                    {channel.members.map(id=>{const u=accounts[id];if(!u)return null;return(
+                      <div key={id} className="flex items-center gap-2.5"><Avatar user={u} size="h-7 w-7"/><span className="text-sm text-slate-700">{u.name}</span></div>
+                    );})}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ── Summary modal ── */
+function SummaryModal({summary,title,onClose}){
+  return (
+    <>
+      <div className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm" onClick={onClose}/>
+      <div className="fixed left-1/2 top-1/2 z-50 w-96 max-h-[80vh] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+          <h3 className="flex items-center gap-2 font-bold text-slate-900"><FileText size={16} className="text-teal-600"/> Summary</h3>
+          <button onClick={onClose} className="grid h-7 w-7 place-items-center rounded-md text-slate-400 hover:bg-slate-100"><X size={16}/></button>
+        </div>
+        <div className="p-5">
+          {summary.error?(
+            <p className="text-sm text-slate-500">{summary.error}</p>
+          ):(
+            <>
+              <p className="text-sm text-slate-500">Overview of <span className="font-semibold text-slate-700">{title}</span></p>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <div className="rounded-lg bg-slate-50 p-3"><p className="text-2xl font-bold text-slate-800">{summary.total}</p><p className="text-xs text-slate-500">Messages</p></div>
+                <div className="rounded-lg bg-slate-50 p-3"><p className="text-2xl font-bold text-slate-800">{summary.fileCount}</p><p className="text-xs text-slate-500">Files shared</p></div>
+              </div>
+              <div className="mt-3">
+                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Participants</p>
+                <div className="space-y-1">
+                  {summary.participants.map(([name,count])=>(
+                    <div key={name} className="flex items-center justify-between text-sm"><span className="text-slate-700">{name}</span><span className="text-slate-400">{count} msg{count===1?'':'s'}</span></div>
+                  ))}
+                </div>
+              </div>
+              <div className="mt-3">
+                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Recent activity</p>
+                <div className="space-y-1 rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
+                  {summary.recent.map((line,i)=><p key={i} className="truncate">{line}</p>)}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
 /* ── Call Modal — opens real Jitsi call in a new tab (no iframe limits) ── */
 function CallModal({ kind, roomName, displayName, isVideo, onClose }){
   const room = roomName.replace(/[^a-zA-Z0-9-]/g,'');
@@ -380,6 +472,11 @@ export default function ChatApp({me:initMe,onLogout}){
   const [incomingCall,setIncomingCall]=useState(null);
   const [loading,setLoading]=useState(true);
   const [showMenu,setShowMenu]=useState(false);
+  const [starred,setStarred]=useState(()=>{try{return JSON.parse(localStorage.getItem('commhub_starred')||'[]');}catch{return[];}});
+  const [muted,setMuted]=useState(()=>{try{return JSON.parse(localStorage.getItem('commhub_muted')||'[]');}catch{return[];}});
+  const [hidden,setHidden]=useState(()=>{try{return JSON.parse(localStorage.getItem('commhub_hidden')||'[]');}catch{return[];}});
+  const [showDetails,setShowDetails]=useState(false);
+  const [summary,setSummary]=useState(null);
   const [showProfile,setShowProfile]=useState(false);
   const [unread,setUnread]=useState({});
   const [activeDMUserId,setActiveDMUserId]=useState(null);
@@ -532,6 +629,52 @@ export default function ChatApp({me:initMe,onLogout}){
   };
   const onFileChange=async e=>{ await uploadFiles(e.target.files); e.target.value=''; };
 
+  // ── Context menu actions ──
+  const persist=(key,arr)=>{ try{localStorage.setItem(key,JSON.stringify(arr));}catch{} };
+  const toggleStar=()=>{ setStarred(p=>{const n=p.includes(activeId)?p.filter(x=>x!==activeId):[...p,activeId];persist('commhub_starred',n);return n;}); };
+  const toggleMute=()=>{ setMuted(p=>{const n=p.includes(activeId)?p.filter(x=>x!==activeId):[...p,activeId];persist('commhub_muted',n);return n;}); };
+  const toggleHide=()=>{ setHidden(p=>{const n=p.includes(activeId)?p.filter(x=>x!==activeId):[...p,activeId];persist('commhub_hidden',n);return n;}); };
+
+  const summarizeConversation=()=>{
+    const msgs=[...messages].sort((a,b)=>parseT(a.t)-parseT(b.t));
+    if(!msgs.length){ setSummary({error:'No messages to summarize yet.'}); return; }
+    // Build a plain-text digest client-side (no external AI needed)
+    const strip=t=>new DOMParser().parseFromString(t||'','text/html').body.textContent||'';
+    const byUser={};
+    let fileCount=0, firstT=msgs[0].t, lastT=msgs[msgs.length-1].t;
+    msgs.forEach(m=>{
+      if(m.text?.includes('[FILE:')) fileCount++;
+      const name=accounts[m.senderId]?.name||'Someone';
+      byUser[name]=(byUser[name]||0)+1;
+    });
+    const participants=Object.entries(byUser).sort((a,b)=>b[1]-a[1]);
+    const recent=msgs.slice(-8).map(m=>{
+      const name=accounts[m.senderId]?.name||'Someone';
+      const txt=strip(m.text).slice(0,100);
+      return `• ${name}: ${txt}${txt.length>=100?'…':''}`;
+    });
+    setSummary({
+      total: msgs.length,
+      participants,
+      fileCount,
+      span: `${fmtDay(firstT)} – ${fmtDay(lastT)}`,
+      recent,
+    });
+  };
+
+  const handleMenuAction=(action)=>{
+    switch(action){
+      case 'details':   setShowDetails(true); break;
+      case 'profile':   if(isDM) setShowDetails(true); else setShowDetails(true); break;
+      case 'star':      toggleStar(); break;
+      case 'mute':      toggleMute(); break;
+      case 'summarize': summarizeConversation(); break;
+      case 'newwindow': window.open(window.location.href,'_blank'); break;
+      case 'hide':      toggleHide(); if(!hidden.includes(activeId)){ const other=channels.find(c=>c.id!==activeId); if(other) setActiveId(other.id); } break;
+      default: break;
+    }
+  };
+
   if(loading) return <div className="grid h-screen w-full place-items-center bg-white"><Loader2 className="animate-spin text-slate-400" size={24}/></div>;
 
   const myId=me.id;
@@ -564,7 +707,7 @@ export default function ChatApp({me:initMe,onLogout}){
         </div>
         <div className="flex-1 overflow-y-auto px-2 py-3">
           <p className="px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Channels</p>
-          {channels.filter(c=>c.type!=='dm').map(c=>{
+          {channels.filter(c=>c.type!=='dm'&&!hidden.includes(c.id)).map(c=>{
             const cnt=unread[c.id]||0;
             return <button key={c.id} onClick={()=>{setActiveDMUserId(null);setActiveId(c.id);}}
               className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition ${activeId===c.id?'bg-teal-500/15 text-white':cnt?'font-semibold text-white hover:bg-slate-700/60':'text-slate-300 hover:bg-slate-700/60'}`}>
@@ -617,7 +760,7 @@ export default function ChatApp({me:initMe,onLogout}){
               <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search" className="w-36 rounded-md border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-sm outline-none transition focus:w-48 focus:border-teal-400 focus:bg-white focus:ring-2 focus:ring-teal-100"/>
             </div>
             <button onClick={()=>setShowMenu(s=>!s)} className={`grid h-9 w-9 place-items-center rounded-md transition ${showMenu?'bg-slate-100 text-slate-800':'text-slate-500 hover:bg-slate-100'}`}><MoreHorizontal size={17}/></button>
-            {showMenu&&<ContextMenu onClose={()=>setShowMenu(false)} isDM={isDM} targetName={headerName||''}/>}
+            {showMenu&&<ContextMenu onClose={()=>setShowMenu(false)} isDM={isDM} targetName={headerName||''} starred={starred.includes(activeId)} muted={muted.includes(activeId)} hidden={hidden.includes(activeId)} onAction={handleMenuAction}/>}
           </div>
         </header>
 
@@ -686,6 +829,8 @@ export default function ChatApp({me:initMe,onLogout}){
       )}
       {forwardMsg&&<ForwardModal channels={channels} accounts={accounts} me={me} onForward={forwardTo} onClose={()=>setForwardMsg(null)}/>}
       {showProfile&&<ProfilePanel user={me} onClose={()=>setShowProfile(false)} onSave={updated=>{setMe(updated);setAccounts(p=>({...p,[updated.id]:updated}));}}/>}
+      {showDetails&&<DetailsPanel isDM={isDM} dmUser={dmUser} channel={activeChannel} accounts={accounts} messageCount={messages.length} onClose={()=>setShowDetails(false)}/>}
+      {summary&&<SummaryModal summary={summary} title={headerName} onClose={()=>setSummary(null)}/>}
     </div>
   );
 }
