@@ -52,6 +52,55 @@ function setupSocket(io) {
       } catch (err) { console.error(err); }
     });
 
+    /* ── Edit message ── */
+    socket.on('message:edit', async ({ id, channelId, text }) => {
+      if (!text?.trim() || !id) return;
+      try {
+        const { rows } = await db.query(
+          `UPDATE messages SET text=$1, edited_at=NOW()
+           WHERE id=$2 AND sender_id=$3 AND deleted=FALSE
+           RETURNING id, text, EXTRACT(EPOCH FROM edited_at)*1000 AS "editedAt"`,
+          [text.trim(), id, userId]
+        );
+        if (rows.length) {
+          io.to(channelId).emit('message:edited', {
+            id, channelId, text: rows[0].text, editedAt: parseFloat(rows[0].editedAt)
+          });
+        }
+      } catch (err) { console.error('edit error', err); }
+    });
+
+    /* ── Delete message (soft delete) ── */
+    socket.on('message:delete', async ({ id, channelId }) => {
+      if (!id) return;
+      try {
+        const { rows } = await db.query(
+          `UPDATE messages SET deleted=TRUE, text='[message deleted]'
+           WHERE id=$1 AND sender_id=$2 RETURNING id`,
+          [id, userId]
+        );
+        if (rows.length) io.to(channelId).emit('message:deleted', { id, channelId });
+      } catch (err) { console.error('delete error', err); }
+    });
+
+    /* ── Forward message ── */
+    socket.on('message:forward', async ({ text, toChannelId }) => {
+      if (!text || !toChannelId) return;
+      try {
+        const { rows } = await db.query(
+          `INSERT INTO messages(channel_id,sender_id,text)
+           VALUES($1,$2,$3)
+           RETURNING id, channel_id AS "channelId", sender_id AS "senderId", text,
+                     EXTRACT(EPOCH FROM created_at)*1000 AS t`,
+          [toChannelId, userId, text]
+        );
+        if (rows.length) {
+          const msg = { ...rows[0], t: parseFloat(rows[0].t), reactions: [], thread: [], threadCount: 0 };
+          io.to(toChannelId).emit('message:new', msg);
+        }
+      } catch (err) { console.error('forward error', err); }
+    });
+
     /* ── Toggle reaction ── */
     socket.on('reaction:toggle', async ({ messageId, channelId, emoji }) => {
       try {
