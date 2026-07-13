@@ -14,6 +14,7 @@ function setupSocket(io) {
 
   io.on('connection', async (socket) => {
     const userId = socket.user.id;
+    socket.data.userId = userId;  // survives io.fetchSockets()
     console.log(`[socket] ${socket.user.name} connected`);
 
     /* Set presence online and join channel rooms */
@@ -122,8 +123,9 @@ function setupSocket(io) {
     });
 
     /* ── Create channel ── */
-    socket.on('channel:create', async ({ name, type = 'public', topic = '' }) => {
+    socket.on('channel:create', async ({ name, type = 'public', topic = '', memberIds = [] }) => {
       const cleanName = name.trim().toLowerCase().replace(/\s+/g,'-');
+      if (!cleanName) return;
       try {
         const ex = await db.query(`SELECT id FROM channels WHERE name=$1`,[cleanName]);
         if (ex.rows.length) { socket.emit('channel:error', { error: 'Channel already exists' }); return; }
@@ -132,22 +134,37 @@ function setupSocket(io) {
           [cleanName,type,topic,userId]
         );
         const ch = rows[0];
+
+        // Determine the member set
+        let memberSet;
         if (type === 'public') {
           const users = await db.query(`SELECT id FROM users`);
-          for (const u of users.rows) {
-            await db.query(`INSERT INTO channel_members(channel_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING`,[ch.id,u.id]);
-          }
-          // join every connected socket to this room
-          const sockets = await io.fetchSockets();
-          for (const s of sockets) s.join(ch.id);
+          memberSet = users.rows.map(u => u.id);
         } else {
-          await db.query(`INSERT INTO channel_members(channel_id,user_id) VALUES($1,$2)`,[ch.id,userId]);
-          socket.join(ch.id);
+          // private: creator + explicitly selected members only
+          memberSet = Array.from(new Set([userId, ...(Array.isArray(memberIds) ? memberIds : [])]));
         }
+
+        for (const uid of memberSet) {
+          await db.query(
+            `INSERT INTO channel_members(channel_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING`,
+            [ch.id, uid]
+          );
+        }
+
         const members = await db.query(`SELECT user_id FROM channel_members WHERE channel_id=$1`,[ch.id]);
         const full = { ...ch, members: members.rows.map(r=>r.user_id) };
-        io.to(ch.id).emit('channel:new', full);
-      } catch (err) { console.error(err); }
+
+        // Join only the sockets of members to this room, and notify only them
+        const sockets = await io.fetchSockets();
+        const memberIdStrs = memberSet.map(String);
+        for (const s of sockets) {
+          if (memberIdStrs.includes(String(s.data?.userId))) {
+            s.join(ch.id);
+            s.emit('channel:new', full);
+          }
+        }
+      } catch (err) { console.error('channel:create error', err); }
     });
 
     /* ── Join a channel room (needed for DMs created after connect) ── */
