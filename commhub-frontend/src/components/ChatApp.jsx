@@ -179,6 +179,43 @@ function Avatar({user,size='h-9 w-9',showPresence=true}){
   );
 }
 
+/* ── Edit Channel Settings Modal ── */
+function EditChannelModal({channel,onSave,onClose}){
+  const [name,setName]=useState(channel.name||'');
+  const [topic,setTopic]=useState(channel.topic||'');
+  return (
+    <>
+      <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm" onClick={onClose}/>
+      <div className="fixed left-1/2 top-1/2 z-50 w-[440px] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between px-6 pt-6">
+          <h2 className="text-xl font-bold text-slate-900">Edit settings</h2>
+          <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-md text-slate-400 hover:bg-slate-100"><X size={18}/></button>
+        </div>
+        <div className="px-6 py-5">
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-semibold text-slate-700">Channel name</span>
+            <div className="flex items-center rounded-lg border border-slate-200 px-3 focus-within:border-teal-400 focus-within:ring-2 focus-within:ring-teal-100">
+              <Hash size={15} className="text-slate-400"/>
+              <input value={name} onChange={e=>setName(e.target.value)} autoFocus
+                className="w-full bg-transparent px-2 py-2.5 text-sm outline-none"/>
+            </div>
+          </label>
+          <label className="mt-4 block">
+            <span className="mb-1.5 block text-sm font-semibold text-slate-700">Topic</span>
+            <input value={topic} onChange={e=>setTopic(e.target.value)} placeholder="What's this channel about?"
+              className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-teal-400 focus:ring-2 focus:ring-teal-100"/>
+          </label>
+          <div className="mt-6 flex justify-end gap-2">
+            <button onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
+            <button onClick={()=>onSave({name:name.trim(),topic:topic.trim()})} disabled={!name.trim()}
+              className={`rounded-lg px-5 py-2 text-sm font-semibold ${name.trim()?'bg-teal-600 text-white hover:bg-teal-700':'bg-slate-100 text-slate-400'}`}>Save changes</button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 /* ── Add People Modal (shown after creating a private channel) ── */
 function AddPeopleModal({channel,teammates,onAdd,onClose}){
   const [selected,setSelected]=useState([]);
@@ -318,6 +355,7 @@ function ContextMenu({onClose,isDM,targetName,starred,muted,hidden,onAction}){
     null,
     {icon:<FileText size={15}/>,label:isDM?'Summarize conversation':'Summarize channel',action:'summarize',sub:true},
     null,
+    ...(isDM?[]:[{icon:<Pencil size={15}/>,label:'Edit settings',action:'editsettings'}]),
     {icon:<ExternalLink size={15}/>,label:'Open in new window',action:'newwindow'},
     null,
     isDM
@@ -624,6 +662,7 @@ export default function ChatApp({me:initMe,onLogout}){
   const [showProfile,setShowProfile]=useState(false);
   const [showCreateChannel,setShowCreateChannel]=useState(false);
   const [addPeopleChannel,setAddPeopleChannel]=useState(null);
+  const [editChannel,setEditChannel]=useState(null);
   const pendingPrivateRef=useRef(null);
   const [unread,setUnread]=useState({});
   const [activeDMUserId,setActiveDMUserId]=useState(null);
@@ -699,13 +738,15 @@ export default function ChatApp({me:initMe,onLogout}){
     socket.on('call:start',onCallStart);
     const onChanLeft=({channelId})=>setChannels(p=>p.filter(c=>c.id!==channelId));
     socket.on('channel:left',onChanLeft);
+    const onChanUpdated=(ch)=>setChannels(p=>p.map(c=>c.id===ch.id?ch:c));
+    socket.on('channel:updated',onChanUpdated);
     return()=>{
       socket.off('message:new',onMsgNew); socket.off('message:edited',onMsgEdited);
       socket.off('message:deleted',onMsgDeleted); socket.off('thread:new',onThreadNew);
       socket.off('reaction:update',onReactUpdate); socket.off('channel:new',onChanNew);
       socket.off('user:presence',onPresence); socket.off('typing:start',onTypingStart);
       socket.off('typing:stop',onTypingStop);
-      socket.off('call:start',onCallStart); socket.off('channel:left',onChanLeft);
+      socket.off('call:start',onCallStart); socket.off('channel:left',onChanLeft); socket.off('channel:updated',onChanUpdated);
     };
   },[socket,activeId,accounts]);
 
@@ -832,6 +873,7 @@ export default function ChatApp({me:initMe,onLogout}){
       case 'star':      toggleStar(); break;
       case 'mute':      toggleMute(); break;
       case 'summarize': summarizeConversation(); break;
+      case 'editsettings': setEditChannel(activeChannel); break;
       case 'newwindow': window.open(window.location.href,'_blank'); break;
       case 'copy:name': navigator.clipboard?.writeText(headerName||'').catch(()=>{}); break;
       case 'copy:link': navigator.clipboard?.writeText(`${window.location.origin}/?c=${activeId}`).catch(()=>{}); break;
@@ -1008,6 +1050,9 @@ export default function ChatApp({me:initMe,onLogout}){
       {addPeopleChannel&&<AddPeopleModal channel={addPeopleChannel} teammates={teammates}
         onAdd={(ids)=>{ socket?.emit('channel:addMembers',{channelId:addPeopleChannel.id,memberIds:ids}); setAddPeopleChannel(null); }}
         onClose={()=>setAddPeopleChannel(null)}/>}
+      {editChannel&&<EditChannelModal channel={editChannel}
+        onSave={({name,topic})=>{ socket?.emit('channel:update',{channelId:editChannel.id,name,topic}); setEditChannel(null); }}
+        onClose={()=>setEditChannel(null)}/>}
     </div>
   );
 }
