@@ -223,6 +223,37 @@ function setupSocket(io) {
       } catch (err) { console.error('leave error', err); }
     });
 
+    /* ── Edit channel settings (name + topic) ── */
+    socket.on('channel:update', async ({ channelId, name, topic }) => {
+      if (!channelId) return;
+      try {
+        const isMember = await db.query(
+          `SELECT 1 FROM channel_members WHERE channel_id=$1 AND user_id=$2`,
+          [channelId, userId]
+        );
+        if (!isMember.rows.length) return;
+
+        const sets=[], vals=[]; let i=1;
+        if (name && name.trim()) {
+          const clean = name.trim().toLowerCase().replace(/\s+/g,'-');
+          // ensure no other channel already has this name
+          const dup = await db.query(`SELECT 1 FROM channels WHERE name=$1 AND id<>$2`,[clean,channelId]);
+          if (dup.rows.length) { socket.emit('channel:error',{error:'A channel with that name already exists'}); return; }
+          sets.push(`name=$${i++}`); vals.push(clean);
+        }
+        if (topic !== undefined) { sets.push(`topic=$${i++}`); vals.push(topic||''); }
+        if (!sets.length) return;
+        vals.push(channelId);
+        const { rows } = await db.query(
+          `UPDATE channels SET ${sets.join(',')} WHERE id=$${i} RETURNING id,name,type,topic`,
+          vals
+        );
+        const memRes = await db.query(`SELECT user_id FROM channel_members WHERE channel_id=$1`,[channelId]);
+        const full = { ...rows[0], members: memRes.rows.map(r=>r.user_id) };
+        io.to(channelId).emit('channel:updated', full);
+      } catch (err) { console.error('channel:update error', err); }
+    });
+
     /* ── Typing indicators ── */
     socket.on('typing:start', ({ channelId }) => {
       socket.to(channelId).emit('typing:start', { userId, channelId });
