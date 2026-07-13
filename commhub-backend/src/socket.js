@@ -170,6 +170,12 @@ function setupSocket(io) {
     });
 
     /* ── Presence change ── */
+    /* ── Call start — relay to others in channel ── */
+    socket.on('call:start', ({ channelId, kind, from }) => {
+      if (!channelId) return;
+      socket.to(channelId).emit('call:start', { channelId, kind, from });
+    });
+
     socket.on('presence:set', async ({ presence }) => {
       const valid = ['online','away','dnd'];
       if (!valid.includes(presence)) return;
