@@ -179,27 +179,70 @@ function Avatar({user,size='h-9 w-9',showPresence=true}){
   );
 }
 
+/* ── Add People Modal (shown after creating a private channel) ── */
+function AddPeopleModal({channel,teammates,onAdd,onClose}){
+  const [selected,setSelected]=useState([]);
+  const [q,setQ]=useState('');
+  const filtered=teammates.filter(u=>u.name.toLowerCase().includes(q.toLowerCase()));
+  const toggle=id=>setSelected(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
+  return (
+    <>
+      <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm" onClick={onClose}/>
+      <div className="fixed left-1/2 top-1/2 z-50 w-[440px] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-start justify-between px-6 pt-6">
+          <div>
+            <h2 className="flex items-center gap-1.5 text-xl font-bold text-slate-900"><Lock size={17}/> Add people to {channel.name}</h2>
+            <p className="mt-0.5 text-sm text-slate-400">#{channel.name}</p>
+          </div>
+          <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-md text-slate-400 hover:bg-slate-100"><X size={18}/></button>
+        </div>
+        <div className="px-6 py-5">
+          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="ex. Nathalie, or search a name…" autoFocus
+            className="w-full rounded-lg border-2 border-teal-400 px-3 py-2.5 text-sm outline-none ring-2 ring-teal-100"/>
+          {selected.length>0&&(
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {selected.map(id=>{const u=teammates.find(t=>t.id===id);if(!u)return null;return(
+                <span key={id} className="flex items-center gap-1 rounded-md bg-teal-50 px-2 py-1 text-xs font-medium text-teal-700">
+                  {u.name}<button onClick={()=>toggle(id)} className="text-teal-400 hover:text-teal-600"><X size={11}/></button>
+                </span>);})}
+            </div>
+          )}
+          <div className="mt-3 max-h-52 overflow-y-auto rounded-lg border border-slate-200">
+            {filtered.length===0&&<p className="px-3 py-4 text-center text-xs text-slate-400">No people found</p>}
+            {filtered.map(u=>(
+              <button key={u.id} onClick={()=>toggle(u.id)} className="flex w-full items-center gap-2.5 px-3 py-2 text-sm hover:bg-slate-50">
+                <Avatar user={u} size="h-7 w-7" showPresence={false}/>
+                <span className="flex-1 text-left text-slate-700">{u.name}</span>
+                <span className={`grid h-5 w-5 place-items-center rounded-md border ${selected.includes(u.id)?'border-teal-600 bg-teal-600 text-white':'border-slate-300'}`}>
+                  {selected.includes(u.id)&&<Check size={13}/>}
+                </span>
+              </button>
+            ))}
+          </div>
+          <div className="mt-5 flex justify-end gap-2">
+            <button onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Skip for now</button>
+            <button onClick={()=>onAdd(selected)} disabled={selected.length===0}
+              className={`rounded-lg px-5 py-2 text-sm font-semibold ${selected.length>0?'bg-teal-600 text-white hover:bg-teal-700':'bg-slate-100 text-slate-400'}`}>
+              Add {selected.length>0?`(${selected.length})`:''}
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 /* ── Create Channel Modal (2-step: name/topic → visibility + members) ── */
-function CreateChannelModal({teammates,onCreate,onClose}){
+function CreateChannelModal({onCreate,onClose}){
   const [step,setStep]=useState(1);
   const [name,setName]=useState('');
   const [topic,setTopic]=useState('');
   const [type,setType]=useState('public');
-  const [selected,setSelected]=useState([]);
-  const [q,setQ]=useState('');
-
-  const toggleMember=id=>setSelected(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
   const canNext = name.trim().length>0;
-  const filtered = teammates.filter(u=>u.name.toLowerCase().includes(q.toLowerCase()));
 
   const create=()=>{
     if(!name.trim()) return;
-    onCreate({
-      name: name.trim(),
-      type,
-      topic: topic.trim(),
-      memberIds: type==='private' ? selected : [],
-    });
+    onCreate({ name: name.trim(), type, topic: topic.trim() });
   };
 
   return (
@@ -249,33 +292,12 @@ function CreateChannelModal({teammates,onCreate,onClose}){
               <div><p className="text-sm font-medium text-slate-800">Private — only specific people</p><p className="text-xs text-slate-500">Only invited members can view or join</p></div>
             </label>
 
-            {type==='private'&&(
-              <div className="mt-4">
-                <p className="mb-1.5 text-sm font-semibold text-slate-700">Add members {selected.length>0&&<span className="font-normal text-slate-400">({selected.length} selected)</span>}</p>
-                <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search people…"
-                  className="mb-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-teal-400 focus:ring-2 focus:ring-teal-100"/>
-                <div className="max-h-44 overflow-y-auto rounded-lg border border-slate-200">
-                  {filtered.length===0&&<p className="px-3 py-4 text-center text-xs text-slate-400">No people found</p>}
-                  {filtered.map(u=>(
-                    <button key={u.id} onClick={()=>toggleMember(u.id)}
-                      className="flex w-full items-center gap-2.5 px-3 py-2 text-sm hover:bg-slate-50">
-                      <Avatar user={u} size="h-7 w-7" showPresence={false}/>
-                      <span className="flex-1 text-left text-slate-700">{u.name}</span>
-                      <span className={`grid h-5 w-5 place-items-center rounded-md border ${selected.includes(u.id)?'border-teal-600 bg-teal-600 text-white':'border-slate-300'}`}>
-                        {selected.includes(u.id)&&<Check size={13}/>}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
             <div className="mt-6 flex items-center justify-between">
               <span className="text-xs text-slate-400">Step 2 of 2</span>
               <div className="flex gap-2">
                 <button onClick={()=>setStep(1)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Back</button>
-                <button onClick={create} disabled={type==='private'&&selected.length===0}
-                  className={`rounded-lg px-5 py-2 text-sm font-semibold ${!(type==='private'&&selected.length===0)?'bg-teal-600 text-white hover:bg-teal-700':'bg-slate-100 text-slate-400'}`}>Create</button>
+                <button onClick={create}
+                  className="rounded-lg bg-teal-600 px-5 py-2 text-sm font-semibold text-white hover:bg-teal-700">Create</button>
               </div>
             </div>
           </div>
@@ -286,23 +308,31 @@ function CreateChannelModal({teammates,onCreate,onClose}){
 }
 
 function ContextMenu({onClose,isDM,targetName,starred,muted,hidden,onAction}){
+  const [copyOpen,setCopyOpen]=useState(false);
   const items=[
-    {icon:<Info size={15}/>,label:'Conversation details',action:'details',sub:true},
+    {icon:<Info size={15}/>,label:isDM?'Conversation details':'Channel details',action:'details',sub:true},
     {icon:<UserCircle size={15}/>,label:isDM?'View full profile':'View members',action:'profile'},
-    {icon:<Star size={15}/>,label:starred?'Unstar conversation':'Star conversation',action:'star'},
+    {icon:<Copy size={15}/>,label:'Copy',action:'copy',sub:true},
+    {icon:<Star size={15}/>,label:starred?(isDM?'Unstar conversation':'Unstar channel'):(isDM?'Star conversation':'Star channel'),action:'star'},
     {icon:<Bell size={15}/>,label:muted?'Unmute notifications':'Mute notifications',action:'mute'},
     null,
-    {icon:<FileText size={15}/>,label:'Summarize conversation',action:'summarize',sub:true},
+    {icon:<FileText size={15}/>,label:isDM?'Summarize conversation':'Summarize channel',action:'summarize',sub:true},
     null,
     {icon:<ExternalLink size={15}/>,label:'Open in new window',action:'newwindow'},
     null,
-    {icon:<EyeOff size={15}/>,label:hidden?'Unhide conversation':'Hide conversation',action:'hide',danger:true},
+    isDM
+      ? {icon:<EyeOff size={15}/>,label:hidden?'Unhide conversation':'Hide conversation',action:'hide',danger:true}
+      : {icon:<LogOut size={15}/>,label:'Leave channel',action:'leave',danger:true},
   ];
-  const handle=(action)=>{ onAction(action); if(action!=='star'&&action!=='mute') onClose(); };
+  const handle=(action)=>{
+    if(action==='copy'){ setCopyOpen(o=>!o); return; }
+    onAction(action);
+    if(action!=='star'&&action!=='mute') onClose();
+  };
   return (
     <>
       <div className="fixed inset-0 z-40" onClick={onClose}/>
-      <div className="absolute right-0 top-12 z-50 w-64 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+      <div className="absolute right-0 top-12 z-50 w-64 overflow-visible rounded-2xl border border-slate-200 bg-white shadow-2xl">
         <div className="border-b border-slate-100 px-4 py-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Options</p>
           <p className="mt-0.5 truncate text-sm font-bold text-slate-800">{targetName}</p>
@@ -310,11 +340,19 @@ function ContextMenu({onClose,isDM,targetName,starred,muted,hidden,onAction}){
         <div className="py-1.5">
           {items.map((item,i)=>item===null
             ?<div key={i} className="my-1 h-px bg-slate-100"/>
-            :<button key={i} onClick={()=>handle(item.action)} className={`flex w-full items-center gap-3 px-4 py-2.5 text-sm transition hover:bg-slate-50 ${item.danger?'text-rose-500':'text-slate-700'}`}>
-              <span className={item.danger?'text-rose-400':'text-slate-400'}>{item.icon}</span>
-              <span className="flex-1 text-left">{item.label}</span>
-              {(item.action==='star'&&starred)||(item.action==='mute'&&muted)?<Check size={14} className="text-teal-500"/>:item.sub?<ChevronDown size={13} className="-rotate-90 text-slate-300"/>:null}
-            </button>
+            :<div key={i} className="relative">
+              <button onClick={()=>handle(item.action)} className={`flex w-full items-center gap-3 px-4 py-2.5 text-sm transition hover:bg-slate-50 ${item.danger?'text-rose-500':'text-slate-700'} ${item.action==='copy'&&copyOpen?'bg-slate-50':''}`}>
+                <span className={item.danger?'text-rose-400':'text-slate-400'}>{item.icon}</span>
+                <span className="flex-1 text-left">{item.label}</span>
+                {(item.action==='star'&&starred)||(item.action==='mute'&&muted)?<Check size={14} className="text-teal-500"/>:item.sub?<ChevronDown size={13} className="-rotate-90 text-slate-300"/>:null}
+              </button>
+              {item.action==='copy'&&copyOpen&&(
+                <div className="absolute right-full top-0 mr-1 w-52 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
+                  <button onClick={()=>{onAction('copy:name');onClose();}} className="flex w-full items-center px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50">Copy name</button>
+                  <button onClick={()=>{onAction('copy:link');onClose();}} className="flex w-full items-center px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50">Copy link</button>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -585,6 +623,8 @@ export default function ChatApp({me:initMe,onLogout}){
   const [summary,setSummary]=useState(null);
   const [showProfile,setShowProfile]=useState(false);
   const [showCreateChannel,setShowCreateChannel]=useState(false);
+  const [addPeopleChannel,setAddPeopleChannel]=useState(null);
+  const pendingPrivateRef=useRef(null);
   const [unread,setUnread]=useState({});
   const [activeDMUserId,setActiveDMUserId]=useState(null);
   const [attachments,setAttachments]=useState([]);
@@ -632,7 +672,14 @@ export default function ChatApp({me:initMe,onLogout}){
     const onMsgDeleted=({id})=>setMessages(p=>p.map(m=>m.id===id?{...m,text:'[message deleted]',deleted:true}:m));
     const onThreadNew=({parentId,msg,threadCount})=>setMessages(p=>p.map(m=>m.id===parentId?{...m,threadCount,thread:[...(m.thread||[]),msg]}:m));
     const onReactUpdate=({messageId,reactions})=>setMessages(p=>p.map(m=>m.id===messageId?{...m,reactions}:m));
-    const onChanNew=ch=>setChannels(p=>[...p,ch]);
+    const onChanNew=ch=>{
+      setChannels(p=>p.find(c=>c.id===ch.id)?p.map(c=>c.id===ch.id?ch:c):[...p,ch]);
+      if(pendingPrivateRef.current && ch.name===pendingPrivateRef.current){
+        pendingPrivateRef.current=null;
+        setActiveId(ch.id);
+        setAddPeopleChannel(ch);
+      }
+    };
     const onPresence=({userId,presence})=>setAccounts(p=>({...p,[userId]:p[userId]?{...p[userId],presence}:p[userId]}));
     const onTypingStart=({userId,channelId})=>{if(channelId===activeId) setTyping(p=>({...p,[channelId]:new Set([...(p[channelId]||[]),userId])}));};
     const onTypingStop=({userId,channelId})=>{if(channelId===activeId) setTyping(p=>{const s=new Set(p[channelId]||[]);s.delete(userId);return{...p,[channelId]:s};});};
@@ -650,13 +697,15 @@ export default function ChatApp({me:initMe,onLogout}){
     socket.on('user:presence',onPresence); socket.on('typing:start',onTypingStart);
     socket.on('typing:stop',onTypingStop);
     socket.on('call:start',onCallStart);
+    const onChanLeft=({channelId})=>setChannels(p=>p.filter(c=>c.id!==channelId));
+    socket.on('channel:left',onChanLeft);
     return()=>{
       socket.off('message:new',onMsgNew); socket.off('message:edited',onMsgEdited);
       socket.off('message:deleted',onMsgDeleted); socket.off('thread:new',onThreadNew);
       socket.off('reaction:update',onReactUpdate); socket.off('channel:new',onChanNew);
       socket.off('user:presence',onPresence); socket.off('typing:start',onTypingStart);
       socket.off('typing:stop',onTypingStop);
-      socket.off('call:start',onCallStart);
+      socket.off('call:start',onCallStart); socket.off('channel:left',onChanLeft);
     };
   },[socket,activeId,accounts]);
 
@@ -716,8 +765,11 @@ export default function ChatApp({me:initMe,onLogout}){
   };
 
   const createChannel=()=>setShowCreateChannel(true);
-  const submitChannel=({name,type,topic,memberIds})=>{
-    socket?.emit('channel:create',{name,type,topic,memberIds});
+  const submitChannel=({name,type,topic})=>{
+    // remember if this was private so we prompt to add people once it's created
+    const slug=name.trim().toLowerCase().replace(/\s+/g,'-');
+    pendingPrivateRef.current = type==='private' ? slug : null;
+    socket?.emit('channel:create',{name,type,topic,memberIds:[]});
     setShowCreateChannel(false);
   };
   const openDM=async userId=>{
@@ -776,11 +828,21 @@ export default function ChatApp({me:initMe,onLogout}){
   const handleMenuAction=(action)=>{
     switch(action){
       case 'details':   setShowDetails(true); break;
-      case 'profile':   if(isDM) setShowDetails(true); else setShowDetails(true); break;
+      case 'profile':   setShowDetails(true); break;
       case 'star':      toggleStar(); break;
       case 'mute':      toggleMute(); break;
       case 'summarize': summarizeConversation(); break;
       case 'newwindow': window.open(window.location.href,'_blank'); break;
+      case 'copy:name': navigator.clipboard?.writeText(headerName||'').catch(()=>{}); break;
+      case 'copy:link': navigator.clipboard?.writeText(`${window.location.origin}/?c=${activeId}`).catch(()=>{}); break;
+      case 'leave':
+        if(window.confirm(`Leave #${activeChannel?.name}?`)){
+          socket?.emit('channel:leave',{channelId:activeId});
+          setChannels(p=>p.filter(c=>c.id!==activeId));
+          const other=channels.find(c=>c.id!==activeId&&c.type!=='dm');
+          if(other) setActiveId(other.id);
+        }
+        break;
       case 'hide':      toggleHide(); if(!hidden.includes(activeId)){ const other=channels.find(c=>c.id!==activeId); if(other) setActiveId(other.id); } break;
       default: break;
     }
@@ -942,7 +1004,10 @@ export default function ChatApp({me:initMe,onLogout}){
       {showProfile&&<ProfilePanel user={me} onClose={()=>setShowProfile(false)} onSave={updated=>{setMe(updated);setAccounts(p=>({...p,[updated.id]:updated}));}}/>}
       {showDetails&&<DetailsPanel isDM={isDM} dmUser={dmUser} channel={activeChannel} accounts={accounts} messageCount={messages.length} onClose={()=>setShowDetails(false)}/>}
       {summary&&<SummaryModal summary={summary} title={headerName} onClose={()=>setSummary(null)}/>}
-      {showCreateChannel&&<CreateChannelModal teammates={teammates} onCreate={submitChannel} onClose={()=>setShowCreateChannel(false)}/>}
+      {showCreateChannel&&<CreateChannelModal onCreate={submitChannel} onClose={()=>setShowCreateChannel(false)}/>}
+      {addPeopleChannel&&<AddPeopleModal channel={addPeopleChannel} teammates={teammates}
+        onAdd={(ids)=>{ socket?.emit('channel:addMembers',{channelId:addPeopleChannel.id,memberIds:ids}); setAddPeopleChannel(null); }}
+        onClose={()=>setAddPeopleChannel(null)}/>}
     </div>
   );
 }
