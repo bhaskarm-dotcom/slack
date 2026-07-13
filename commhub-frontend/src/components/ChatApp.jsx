@@ -319,67 +319,46 @@ function ProfilePanel({user,onClose,onSave}){
   );
 }
 
-/* ── Call Modal — real WebRTC video/voice via Jitsi Meet ── */
+/* ── Call Modal — opens real Jitsi call in a new tab (no iframe limits) ── */
 function CallModal({ kind, roomName, displayName, isVideo, onClose }){
-  const containerRef = useRef(null);
-  const apiRef = useRef(null);
+  const room = roomName.replace(/[^a-zA-Z0-9-]/g,'');
+  const [opened,setOpened]=useState(false);
 
-  useEffect(()=>{
-    let cancelled = false;
-    function startJitsi(){
-      if (cancelled || !containerRef.current) return;
-      // eslint-disable-next-line no-undef
-      const JitsiMeetExternalAPI = window.JitsiMeetExternalAPI;
-      if (!JitsiMeetExternalAPI) return;
-      apiRef.current = new JitsiMeetExternalAPI('meet.ffmuc.net', {
-        roomName: roomName.replace(/[^a-zA-Z0-9-]/g,''),
-        parentNode: containerRef.current,
-        width: '100%',
-        height: '100%',
-        userInfo: { displayName: displayName || 'User' },
-        configOverwrite: {
-          startWithVideoMuted: !isVideo,
-          prejoinPageEnabled: false,
-          disableDeepLinking: true,
-        },
-        interfaceConfigOverwrite: { MOBILE_APP_PROMO: false },
-      });
-      apiRef.current.addEventListener('readyToClose', onClose);
-    }
+  const buildUrl=()=>{
+    const params=new URLSearchParams();
+    if(displayName) params.set('userInfo.displayName', displayName);
+    const cfg = isVideo ? '' : '#config.startWithVideoMuted=true';
+    return `https://meet.jit.si/${room}${cfg}`;
+  };
 
-    // Load Jitsi script once
-    if (window.JitsiMeetExternalAPI) {
-      startJitsi();
-    } else {
-      let s = document.getElementById('jitsi-api-script');
-      if (!s) {
-        s = document.createElement('script');
-        s.id = 'jitsi-api-script';
-        s.src = 'https://meet.ffmuc.net/external_api.js';
-        s.async = true;
-        document.body.appendChild(s);
-      }
-      s.addEventListener('load', startJitsi);
-    }
+  const openCall=()=>{
+    window.open(buildUrl(), '_blank', 'noopener,noreferrer');
+    setOpened(true);
+  };
 
-    return ()=>{
-      cancelled = true;
-      try { apiRef.current?.dispose(); } catch {}
-    };
-  },[roomName, displayName, isVideo, onClose]);
+  // auto-open once when the modal mounts
+  useEffect(()=>{ openCall(); /* eslint-disable-next-line */ },[]);
 
   return (
-    <div className="fixed inset-0 z-[60] flex flex-col bg-slate-900">
-      <div className="flex items-center justify-between border-b border-slate-700 px-4 py-2.5">
-        <span className="flex items-center gap-2 text-sm font-medium text-white">
-          {isVideo?<Video size={16}/>:<Phone size={16}/>}
-          {isVideo?'Video call':'Voice call'} · {roomName.replace(/[^a-zA-Z0-9-]/g,'')}
-        </span>
-        <button onClick={onClose} className="flex items-center gap-1.5 rounded-md bg-rose-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-600">
-          <X size={13}/> Leave call
-        </button>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm">
+      <div className="w-96 rounded-2xl bg-white p-6 shadow-2xl text-center">
+        <div className={`mx-auto grid h-14 w-14 place-items-center rounded-full ${isVideo?'bg-teal-100 text-teal-600':'bg-indigo-100 text-indigo-600'}`}>
+          {isVideo?<Video size={26}/>:<Phone size={26}/>}
+        </div>
+        <h3 className="mt-4 text-lg font-bold text-slate-900">{isVideo?'Video call':'Voice call'} started</h3>
+        <p className="mt-1 text-sm text-slate-500">Your call opened in a new tab. Share this conversation so others can join the same room.</p>
+        <div className="mt-4 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-600 break-all">
+          Room: <span className="font-mono font-semibold">{room}</span>
+        </div>
+        <div className="mt-5 flex flex-col gap-2">
+          <button onClick={openCall} className="flex items-center justify-center gap-2 rounded-lg bg-teal-600 py-2.5 text-sm font-semibold text-white hover:bg-teal-700">
+            {isVideo?<Video size={15}/>:<Phone size={15}/>} {opened?'Reopen call tab':'Open call'}
+          </button>
+          <button onClick={onClose} className="rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
+            Close
+          </button>
+        </div>
       </div>
-      <div ref={containerRef} className="flex-1"/>
     </div>
   );
 }
