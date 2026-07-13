@@ -319,6 +319,71 @@ function ProfilePanel({user,onClose,onSave}){
   );
 }
 
+/* ── Call Modal — real WebRTC video/voice via Jitsi Meet ── */
+function CallModal({ kind, roomName, displayName, isVideo, onClose }){
+  const containerRef = useRef(null);
+  const apiRef = useRef(null);
+
+  useEffect(()=>{
+    let cancelled = false;
+    function startJitsi(){
+      if (cancelled || !containerRef.current) return;
+      // eslint-disable-next-line no-undef
+      const JitsiMeetExternalAPI = window.JitsiMeetExternalAPI;
+      if (!JitsiMeetExternalAPI) return;
+      apiRef.current = new JitsiMeetExternalAPI('meet.jit.si', {
+        roomName: roomName.replace(/[^a-zA-Z0-9-]/g,''),
+        parentNode: containerRef.current,
+        width: '100%',
+        height: '100%',
+        userInfo: { displayName: displayName || 'User' },
+        configOverwrite: {
+          startWithVideoMuted: !isVideo,
+          prejoinPageEnabled: false,
+          disableDeepLinking: true,
+        },
+        interfaceConfigOverwrite: { MOBILE_APP_PROMO: false },
+      });
+      apiRef.current.addEventListener('readyToClose', onClose);
+    }
+
+    // Load Jitsi script once
+    if (window.JitsiMeetExternalAPI) {
+      startJitsi();
+    } else {
+      let s = document.getElementById('jitsi-api-script');
+      if (!s) {
+        s = document.createElement('script');
+        s.id = 'jitsi-api-script';
+        s.src = 'https://meet.jit.si/external_api.js';
+        s.async = true;
+        document.body.appendChild(s);
+      }
+      s.addEventListener('load', startJitsi);
+    }
+
+    return ()=>{
+      cancelled = true;
+      try { apiRef.current?.dispose(); } catch {}
+    };
+  },[roomName, displayName, isVideo, onClose]);
+
+  return (
+    <div className="fixed inset-0 z-[60] flex flex-col bg-slate-900">
+      <div className="flex items-center justify-between border-b border-slate-700 px-4 py-2.5">
+        <span className="flex items-center gap-2 text-sm font-medium text-white">
+          {isVideo?<Video size={16}/>:<Phone size={16}/>}
+          {isVideo?'Video call':'Voice call'} · {roomName.replace(/[^a-zA-Z0-9-]/g,'')}
+        </span>
+        <button onClick={onClose} className="flex items-center gap-1.5 rounded-md bg-rose-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-600">
+          <X size={13}/> Leave call
+        </button>
+      </div>
+      <div ref={containerRef} className="flex-1"/>
+    </div>
+  );
+}
+
 /* ══════════════════════════════════════════════════════════
    MAIN CHAT APP
 ══════════════════════════════════════════════════════════ */
@@ -559,10 +624,9 @@ export default function ChatApp({me:initMe,onLogout}){
         </header>
 
         {callBanner&&(
-          <div className="flex items-center justify-between border-b border-teal-100 bg-teal-50 px-5 py-2.5 text-sm">
-            <span className="flex items-center gap-2 font-medium text-teal-800">{callBanner.kind==='video'?<Video size={16}/>:<Phone size={16}/>}{callBanner.kind==='video'?'Video':'Voice'} call · connecting…</span>
-            <button onClick={()=>setCallBanner(null)} className="rounded-md bg-rose-500 px-3 py-1 text-xs font-semibold text-white hover:bg-rose-600">Leave</button>
-          </div>
+          <CallModal kind={callBanner.kind} roomName={`CommHub-${activeId}`}
+            displayName={me.name} isVideo={callBanner.kind==='video'}
+            onClose={()=>setCallBanner(null)}/>
         )}
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-2 py-4">
