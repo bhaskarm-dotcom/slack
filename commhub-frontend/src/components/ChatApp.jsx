@@ -4,7 +4,7 @@ import { Hash, Lock, Search, Send, Smile, Paperclip, Plus, Phone, Video,
          Underline, Strikethrough, Link, List, ListOrdered, Code,
          CornerDownLeft, LogOut, Loader2, Info, Star, EyeOff, Bell,
          ExternalLink, Columns2, UserCircle, FileText, Pencil, Trash2,
-         Forward, Bookmark, Download, Check, Camera, Terminal, Quote, Copy } from 'lucide-react';
+         Forward, Bookmark, Download, Check, Camera, Terminal, Quote, Copy, BellOff } from 'lucide-react';
 import api from '../lib/api';
 import { getSocket } from '../lib/socket';
 
@@ -637,6 +637,23 @@ function CallModal({ kind, roomName, displayName, isVideo, onClose }){
   );
 }
 
+/* ── Sidebar accordion Section ── */
+function Section({title,open,onToggle,action,children}){
+  const isOpen = open !== false; // undefined = open by default
+  return (
+    <div className="mb-2">
+      <div className="group flex items-center gap-1 px-1.5 py-1">
+        <button onClick={onToggle} className="flex flex-1 items-center gap-1 text-xs font-semibold uppercase tracking-wide text-slate-400 hover:text-slate-200">
+          <ChevronDown size={13} className={`transition-transform ${isOpen?'':'-rotate-90'}`}/>
+          {title}
+        </button>
+        {action}
+      </div>
+      {isOpen&&<div className="space-y-0.5">{children}</div>}
+    </div>
+  );
+}
+
 /* ══════════════════════════════════════════════════════════
    MAIN CHAT APP
 ══════════════════════════════════════════════════════════ */
@@ -663,6 +680,8 @@ export default function ChatApp({me:initMe,onLogout}){
   const [showCreateChannel,setShowCreateChannel]=useState(false);
   const [addPeopleChannel,setAddPeopleChannel]=useState(null);
   const [editChannel,setEditChannel]=useState(null);
+  const [secOpen,setSecOpen]=useState(()=>{try{return JSON.parse(localStorage.getItem('commhub_sections')||'{}');}catch{return{};}});
+  const toggleSection=(key)=>setSecOpen(p=>{const n={...p,[key]:p[key]===false?true:false};try{localStorage.setItem('commhub_sections',JSON.stringify(n));}catch{}return n;});
   const pendingPrivateRef=useRef(null);
   const [unread,setUnread]=useState({});
   const [activeDMUserId,setActiveDMUserId]=useState(null);
@@ -921,36 +940,80 @@ export default function ChatApp({me:initMe,onLogout}){
           <button onClick={createChannel} className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-slate-700 text-white hover:bg-slate-600"><Plus size={16}/></button>
         </div>
         <div className="flex-1 overflow-y-auto px-2 py-3">
-          <p className="px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Channels</p>
-          {channels.filter(c=>c.type!=='dm'&&!hidden.includes(c.id)).map(c=>{
-            const cnt=unread[c.id]||0;
-            return <button key={c.id} onClick={()=>{setActiveDMUserId(null);setActiveId(c.id);}}
-              className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition ${activeId===c.id?'bg-teal-500/15 text-white':cnt?'font-semibold text-white hover:bg-slate-700/60':'text-slate-300 hover:bg-slate-700/60'}`}>
-              <span className="grid h-[18px] w-[18px] place-items-center text-slate-400">{c.type==='private'?<Lock size={15}/>:<Hash size={15}/>}</span>
-              <span className="flex-1 truncate text-left">{c.name}</span>
-              {cnt>0&&<span className="grid h-5 min-w-5 place-items-center rounded-full bg-rose-500 px-1 text-[11px] font-bold text-white">{cnt}</span>}
-            </button>;
-          })}
-          <button onClick={createChannel} className="mt-1 flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-sm text-slate-400 hover:bg-slate-700/60 hover:text-white">
-            <span className="grid h-[18px] w-[18px] place-items-center"><Plus size={14}/></span> Add channel
-          </button>
-          <p className="mt-4 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Direct messages</p>
-          {teammates.map(u=>{
-            const dmChanId=channels.find(c=>c.type==='dm'&&c.members?.includes(u.id)&&c.members?.includes(myId))?.id;
-            const cnt=dmChanId?(unread[dmChanId]||0):0;
-            const active=activeDMUserId===u.id||(isDM&&dmUserId===u.id);
-            return <button key={u.id} onClick={()=>openDM(u.id)}
-              className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition ${active?'bg-teal-500/15 text-white':cnt?'font-semibold text-white hover:bg-slate-700/60':'text-slate-300 hover:bg-slate-700/60'}`}>
-              <div className="relative shrink-0">
-                {u.avatar_url?<img src={`${API_BASE}${u.avatar_url}`} alt={u.name} className="h-7 w-7 rounded-md object-cover"/>
-                  :<div className={`h-7 w-7 ${u.color||'bg-slate-500'} grid place-items-center rounded-md text-[10px] font-bold text-white`}>{u.initials||'?'}</div>}
-                <span className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-slate-800 ${PRESENCE[u.presence]?.color||'bg-slate-400'}`}/>
-              </div>
-              <span className="flex-1 truncate text-left">{u.name}</span>
-              {cnt>0&&<span className="grid h-5 min-w-5 place-items-center rounded-full bg-rose-500 px-1 text-[11px] font-bold text-white">{cnt}</span>}
-            </button>;
-          })}
-          {teammates.length===0&&<p className="px-2.5 py-2 text-xs text-slate-500">Teammates appear here when they sign up.</p>}
+          {(()=>{
+            // Build renderers reused across sections
+            const renderChannel=(c)=>{
+              const cnt=unread[c.id]||0; const isMuted=muted.includes(c.id);
+              return (
+                <button key={c.id} onClick={()=>{setActiveDMUserId(null);setActiveId(c.id);}}
+                  className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition ${activeId===c.id?'bg-teal-500/15 text-white':cnt&&!isMuted?'font-semibold text-white hover:bg-slate-700/60':'text-slate-300 hover:bg-slate-700/60'} ${isMuted?'opacity-60':''}`}>
+                  <span className="grid h-[18px] w-[18px] place-items-center text-slate-400">{c.type==='private'?<Lock size={15}/>:<Hash size={15}/>}</span>
+                  <span className="flex-1 truncate text-left">{c.name}</span>
+                  {starred.includes(c.id)&&<Star size={12} className="fill-amber-400 text-amber-400"/>}
+                  {isMuted&&<BellOff size={13} className="text-slate-500"/>}
+                  {cnt>0&&!isMuted&&<span className="grid h-5 min-w-5 place-items-center rounded-full bg-rose-500 px-1 text-[11px] font-bold text-white">{cnt}</span>}
+                </button>
+              );
+            };
+            const renderDM=(u)=>{
+              const dmChanId=channels.find(c=>c.type==='dm'&&c.members?.includes(u.id)&&c.members?.includes(myId))?.id;
+              const cnt=dmChanId?(unread[dmChanId]||0):0;
+              const isMuted=dmChanId&&muted.includes(dmChanId);
+              const active=activeDMUserId===u.id||(isDM&&dmUserId===u.id);
+              return (
+                <button key={u.id} onClick={()=>openDM(u.id)}
+                  className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition ${active?'bg-teal-500/15 text-white':cnt&&!isMuted?'font-semibold text-white hover:bg-slate-700/60':'text-slate-300 hover:bg-slate-700/60'} ${isMuted?'opacity-60':''}`}>
+                  <div className="relative shrink-0">
+                    {u.avatar_url?<img src={`${API_BASE}${u.avatar_url}`} alt={u.name} className="h-7 w-7 rounded-md object-cover"/>
+                      :<div className={`h-7 w-7 ${u.color||'bg-slate-500'} grid place-items-center rounded-md text-[10px] font-bold text-white`}>{u.initials||'?'}</div>}
+                    <span className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-slate-800 ${PRESENCE[u.presence]?.color||'bg-slate-400'}`}/>
+                  </div>
+                  <span className="flex-1 truncate text-left">{u.name}</span>
+                  {dmChanId&&starred.includes(dmChanId)&&<Star size={12} className="fill-amber-400 text-amber-400"/>}
+                  {isMuted&&<BellOff size={13} className="text-slate-500"/>}
+                  {cnt>0&&!isMuted&&<span className="grid h-5 min-w-5 place-items-center rounded-full bg-rose-500 px-1 text-[11px] font-bold text-white">{cnt}</span>}
+                </button>
+              );
+            };
+
+            // Starred items = channels + DMs whose channel id is starred
+            const starredChannels=channels.filter(c=>c.type!=='dm'&&!hidden.includes(c.id)&&starred.includes(c.id));
+            const starredDMUsers=teammates.filter(u=>{
+              const id=channels.find(c=>c.type==='dm'&&c.members?.includes(u.id)&&c.members?.includes(myId))?.id;
+              return id&&starred.includes(id);
+            });
+            const hasStarred=starredChannels.length+starredDMUsers.length>0;
+
+            const visibleChannels=channels.filter(c=>c.type!=='dm'&&!hidden.includes(c.id)&&!starred.includes(c.id));
+            const visibleDMUsers=teammates.filter(u=>{
+              const id=channels.find(c=>c.type==='dm'&&c.members?.includes(u.id)&&c.members?.includes(myId))?.id;
+              return !(id&&starred.includes(id));
+            });
+
+            return (
+              <>
+                {hasStarred&&(
+                  <Section title="Starred" open={secOpen.starred} onToggle={()=>toggleSection('starred')}>
+                    {starredChannels.map(renderChannel)}
+                    {starredDMUsers.map(renderDM)}
+                  </Section>
+                )}
+
+                <Section title="Channels" open={secOpen.channels} onToggle={()=>toggleSection('channels')}
+                  action={<button onClick={(e)=>{e.stopPropagation();createChannel();}} className="grid h-5 w-5 place-items-center rounded text-slate-400 hover:bg-slate-700 hover:text-white"><Plus size={14}/></button>}>
+                  {visibleChannels.map(renderChannel)}
+                  <button onClick={createChannel} className="mt-0.5 flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-sm text-slate-400 hover:bg-slate-700/60 hover:text-white">
+                    <span className="grid h-[18px] w-[18px] place-items-center"><Plus size={14}/></span> Add channel
+                  </button>
+                </Section>
+
+                <Section title="Direct messages" open={secOpen.dms} onToggle={()=>toggleSection('dms')}>
+                  {visibleDMUsers.map(renderDM)}
+                  {teammates.length===0&&<p className="px-2.5 py-2 text-xs text-slate-500">Teammates appear here when they sign up.</p>}
+                </Section>
+              </>
+            );
+          })()}
         </div>
       </aside>
 
@@ -962,6 +1025,8 @@ export default function ChatApp({me:initMe,onLogout}){
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <h1 className="truncate font-bold text-slate-900">{headerName}</h1>
+                {starred.includes(activeId)&&<Star size={14} className="fill-amber-400 text-amber-400"/>}
+                {muted.includes(activeId)&&<BellOff size={14} className="text-slate-400"/>}
                 {isDM&&dmUser&&<><span className={`h-2 w-2 rounded-full ${PRESENCE[dmUser.presence]?.color||'bg-slate-400'}`}/><span className="text-xs text-slate-400">{PRESENCE[dmUser.presence]?.label}</span></>}
               </div>
               <p className="truncate text-xs text-slate-400">{isDM?dmUser?.title||'Direct message':activeChannel?.topic||'No topic set'}</p>
